@@ -27,14 +27,18 @@ class GrundfosDevice:
         self._notification_callbacks: list[Callable[[bytes], None]] = []
         self._data: dict[str, Any] = {}
         self._lock = asyncio.Lock()
+        self._response_queue: asyncio.Queue = asyncio.Queue()
+        self._notification_count = 0
 
         # Grundfos custom service UUIDs (reversed from btsnoop)
         self.service_uuid_1 = "9d41001835d6f4adad60e7bd8dc491c0"
         self.service_uuid_2 = "9d41001935d6f4adad60e7bd8dc491c0"
 
         # Main communication characteristics (may be separate for notify/write)
-        self.notify_char_uuid = None  # Characteristic for notifications
-        self.write_char_uuid = None  # Characteristic for writing commands
+        self.notify_char_uuid = None  # Characteristic UUID for notifications
+        self.write_char_uuid = None  # Characteristic UUID for writing commands
+        self._notify_char = None  # Actual characteristic object for notifications
+        self._write_char = None  # Actual characteristic object for writing
 
     async def connect(self) -> bool:
         """Connect to the device."""
@@ -47,21 +51,66 @@ class GrundfosDevice:
                 self.ble_device.address,
                 disconnected_callback=self._disconnected_callback,
                 max_attempts=3,  # Reduce from default 10 to avoid slot exhaustion
-                use_services_cache=True,
+                use_services_cache=False,  # Disable cache to avoid stale characteristic issues
                 ble_device_callback=lambda: self.ble_device,
             )
 
             _LOGGER.info("Successfully established connection to %s", self.ble_device.address)
 
+            # Ensure services are loaded (force refresh to avoid cache issues)
+            _LOGGER.debug("Ensuring GATT services are loaded...")
+            try:
+                await self.client.get_services()
+                _LOGGER.debug("GATT services loaded successfully")
+            except Exception as ex:
+                _LOGGER.warning("Error getting services (will try to continue): %s", ex)
+
+            # Small delay to let services stabilize
+            await asyncio.sleep(0.1)
+
             # Discover characteristics
             await self._discover_characteristics()
 
             # Start listening for notifications
-            if self.notify_char_uuid:
-                await self.client.start_notify(
-                    self.notify_char_uuid, self._notification_handler
-                )
-                _LOGGER.info("Started notifications on %s", self.notify_char_uuid)
+            if self._notify_char:
+                try:
+                    # Verify the characteristic is still valid in current services
+                    char_found = False
+                    for service in self.client.services:
+                        for char in service.characteristics:
+                            if char.uuid == self._notify_char.uuid:
+                                char_found = True
+                                _LOGGER.debug(
+                                    "Verified characteristic %s exists in service %s",
+                                    char.uuid,
+                                    service.uuid
+                                )
+                                break
+                        if char_found:
+                            break
+
+                    if not char_found:
+                        _LOGGER.error(
+                            "Characteristic %s not found in current services! "
+                            "Available characteristics: %s",
+                            self._notify_char.uuid,
+                            [char.uuid for s in self.client.services for char in s.characteristics]
+                        )
+                        raise BleakError(f"Characteristic {self._notify_char.uuid} not found in services")
+
+                    _LOGGER.debug("Starting notifications on %s", self._notify_char.uuid)
+                    # Use the characteristic object directly
+                    await self.client.start_notify(
+                        self._notify_char, self._notification_handler
+                    )
+                    _LOGGER.info("Started notifications on %s", self._notify_char.uuid)
+                except BleakError as ex:
+                    _LOGGER.error(
+                        "Failed to start notifications on %s: %s",
+                        self._notify_char.uuid if self._notify_char else "None",
+                        ex
+                    )
+                    raise
             else:
                 _LOGGER.warning("No notify characteristic found - notifications disabled")
 
@@ -119,6 +168,8 @@ class GrundfosDevice:
         # Prioritize combined characteristic, then separate characteristics
         if combined_candidates:
             # Use the same characteristic for both notify and write
+            self._notify_char = combined_candidates[0]
+            self._write_char = combined_candidates[0]
             self.notify_char_uuid = combined_candidates[0].uuid
             self.write_char_uuid = combined_candidates[0].uuid
             _LOGGER.info(
@@ -128,12 +179,14 @@ class GrundfosDevice:
         else:
             # Use separate characteristics
             if notify_candidates:
+                self._notify_char = notify_candidates[0]
                 self.notify_char_uuid = notify_candidates[0].uuid
                 _LOGGER.info("Using notify characteristic: %s", self.notify_char_uuid)
             else:
                 _LOGGER.warning("No notify characteristic found!")
 
             if write_candidates:
+                self._write_char = write_candidates[0]
                 self.write_char_uuid = write_candidates[0].uuid
                 _LOGGER.info("Using write characteristic: %s", self.write_char_uuid)
             else:
@@ -151,11 +204,25 @@ class GrundfosDevice:
 
     def _notification_handler(self, sender: int, data: bytes) -> None:
         """Handle notifications from the device."""
-        _LOGGER.debug("Notification from %s: %s", sender, data.hex())
+        self._notification_count += 1
+        _LOGGER.info(
+            "📨 NOTIFICATION #%d from %s (%d bytes): %s",
+            self._notification_count,
+            sender,
+            len(data),
+            data.hex()
+        )
+
+        # Add to response queue for command responses
+        try:
+            self._response_queue.put_nowait(data)
+        except asyncio.QueueFull:
+            _LOGGER.warning("Response queue is full, dropping notification")
 
         # Parse notification data (based on btsnoop analysis)
         # Format appears to be: [header][command][payload][checksum]
         if len(data) < 4:
+            _LOGGER.warning("Notification too short (%d bytes), skipping parse", len(data))
             return
 
         try:
@@ -164,7 +231,17 @@ class GrundfosDevice:
             length = data[1]
             command_type = data[2:4]
 
+            _LOGGER.debug(
+                "Notification details: header=0x%02x, length=%d, command_type=%s",
+                header,
+                length,
+                command_type.hex()
+            )
+
             if header == 0x24:  # Response header from btsnoop
+                self._parse_response(data)
+            else:
+                _LOGGER.debug("Unknown header 0x%02x, attempting parse anyway", header)
                 self._parse_response(data)
 
             # Notify callbacks
@@ -172,50 +249,77 @@ class GrundfosDevice:
                 callback(data)
 
         except Exception as ex:
-            _LOGGER.error("Error parsing notification: %s", ex)
+            _LOGGER.error("Error parsing notification: %s", ex, exc_info=True)
 
     def _parse_response(self, data: bytes) -> None:
         """Parse device response data."""
         # Based on btsnoop analysis, responses contain various device info
         # Format: 24 [len] f8 e7 [cmd] [payload] [checksum]
 
+        _LOGGER.debug("Parsing response of %d bytes: %s", len(data), data.hex())
+
         if len(data) < 6:
+            _LOGGER.debug("Response too short for parsing (%d bytes)", len(data))
             return
 
         try:
+            header = data[0]
             length = data[1]
             # cmd_high = data[4]
             # cmd_low = data[5]
-            payload = data[6:-2]  # Exclude checksum at end
+            payload = data[6:-2] if len(data) > 8 else data[6:]  # Exclude checksum at end
+
+            _LOGGER.debug(
+                "Response structure: header=0x%02x, length=%d, payload=%d bytes: %s",
+                header,
+                length,
+                len(payload),
+                payload.hex() if payload else "(empty)"
+            )
 
             # Try to decode ASCII strings (device info, model, serial, etc.)
             try:
                 decoded = payload.decode("ascii", errors="ignore")
                 if decoded and any(c.isprintable() for c in decoded):
-                    _LOGGER.debug("Decoded response: %s", decoded)
+                    _LOGGER.info("✅ Decoded ASCII response: '%s'", decoded)
 
                     # Store device info
                     if "SCALA" in decoded:
                         self._data["model"] = decoded.strip()
+                        _LOGGER.info("Found model: %s", self._data["model"])
                     elif decoded.startswith("V") and "." in decoded:
                         self._data["firmware"] = decoded.strip()
+                        _LOGGER.info("Found firmware: %s", self._data["firmware"])
                     elif decoded.isdigit() and len(decoded) >= 8:
                         self._data["serial"] = decoded.strip()
+                        _LOGGER.info("Found serial: %s", self._data["serial"])
+                else:
+                    _LOGGER.debug("Payload is not printable ASCII")
 
             except UnicodeDecodeError:
-                pass
+                _LOGGER.debug("Payload is not ASCII text")
 
             # Parse numeric data
             # Based on btsnoop, there are many sensor readings in the responses
             if len(payload) >= 4:
                 # Example: parse 32-bit integers
-                pass  # Add specific parsing based on pump data format
+                _LOGGER.debug("Payload has %d bytes for numeric parsing", len(payload))
+                # Add specific parsing based on pump data format
 
         except Exception as ex:
-            _LOGGER.error("Error parsing response: %s", ex)
+            _LOGGER.error("Error parsing response: %s", ex, exc_info=True)
 
-    async def send_command(self, command: bytes) -> None:
-        """Send a command to the device."""
+    async def send_command(self, command: bytes, wait_for_response: bool = False, timeout: float = 2.0) -> bytes | None:
+        """Send a command to the device.
+
+        Args:
+            command: The command bytes to send
+            wait_for_response: If True, wait for and return a notification response
+            timeout: How long to wait for a response in seconds
+
+        Returns:
+            The response bytes if wait_for_response=True, otherwise None
+        """
         # Check client connection
         if not self.client:
             _LOGGER.error("Cannot send command: BLE client not initialized")
@@ -226,7 +330,7 @@ class GrundfosDevice:
             raise RuntimeError("Device not connected to BLE")
 
         # Check if write characteristic was discovered
-        if not self.write_char_uuid:
+        if not self._write_char:
             _LOGGER.error("Cannot send command: Write characteristic not found")
             raise RuntimeError(
                 "Write characteristic not found - characteristic discovery may have failed"
@@ -234,11 +338,37 @@ class GrundfosDevice:
 
         async with self._lock:
             try:
-                _LOGGER.debug("Sending command to %s: %s", self.write_char_uuid, command.hex())
+                # Clear response queue before sending
+                if wait_for_response:
+                    while not self._response_queue.empty():
+                        try:
+                            self._response_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+
+                _LOGGER.debug("📤 Sending command to %s: %s", self._write_char.uuid, command.hex())
+                # Use the characteristic object directly
                 await self.client.write_gatt_char(
-                    self.write_char_uuid, command, response=False
+                    self._write_char, command, response=False
                 )
-                _LOGGER.debug("Command sent successfully")
+                _LOGGER.debug("✅ Command sent successfully")
+
+                # Wait for response if requested
+                if wait_for_response:
+                    try:
+                        _LOGGER.debug("⏳ Waiting up to %.1fs for response...", timeout)
+                        response = await asyncio.wait_for(
+                            self._response_queue.get(),
+                            timeout=timeout
+                        )
+                        _LOGGER.debug("✅ Got response: %s", response.hex())
+                        return response
+                    except asyncio.TimeoutError:
+                        _LOGGER.warning("⏱️ Timeout waiting for response to command %s", command.hex())
+                        return None
+
+                return None
+
             except BleakError as ex:
                 _LOGGER.error("Failed to send command via BLE: %s", ex, exc_info=True)
                 # Mark as disconnected
@@ -247,7 +377,7 @@ class GrundfosDevice:
 
     async def read_device_info(self) -> dict[str, Any]:
         """Read device information (model, serial, firmware)."""
-        _LOGGER.debug("Reading device info from %s", self.ble_device.address)
+        _LOGGER.info("📖 Reading device info from %s", self.ble_device.address)
 
         try:
             # Based on btsnoop, device info commands start with 2705e7f807...
@@ -261,15 +391,26 @@ class GrundfosDevice:
                 bytes.fromhex("2705e7f807013ad500"),  # Firmware 2
             ]
 
-            _LOGGER.debug("Sending %d device info commands", len(commands))
+            _LOGGER.info("Sending %d device info commands and waiting for responses", len(commands))
+            responses_received = 0
             for idx, cmd in enumerate(commands, 1):
-                await self.send_command(cmd)
-                await asyncio.sleep(0.2)  # Wait for response
+                _LOGGER.debug("Sending device info command %d/%d", idx, len(commands))
+                response = await self.send_command(cmd, wait_for_response=True, timeout=3.0)
+                if response:
+                    responses_received += 1
+                    _LOGGER.debug("Got response %d/%d", responses_received, len(commands))
+                else:
+                    _LOGGER.warning("No response for command %d/%d", idx, len(commands))
 
-            # Give time for notifications to arrive
-            await asyncio.sleep(1)
+                # Small delay between commands
+                await asyncio.sleep(0.1)
 
-            _LOGGER.info("Device info read complete. Data: %s", self._data)
+            _LOGGER.info(
+                "Device info read complete. Received %d/%d responses. Data: %s",
+                responses_received,
+                len(commands),
+                self._data
+            )
             return self._data
         except Exception as ex:
             _LOGGER.error("Failed to read device info: %s", ex, exc_info=True)
@@ -277,7 +418,7 @@ class GrundfosDevice:
 
     async def read_pump_status(self) -> dict[str, Any]:
         """Read pump status and sensor data."""
-        _LOGGER.debug("Reading pump status from %s", self.ble_device.address)
+        _LOGGER.info("📊 Reading pump status from %s", self.ble_device.address)
 
         try:
             # Based on btsnoop analysis, status commands use pattern:
@@ -288,13 +429,26 @@ class GrundfosDevice:
                 bytes.fromhex("2707e7f80a035b00a412a3"),  # Another status
             ]
 
-            _LOGGER.debug("Sending %d pump status commands", len(status_commands))
-            for cmd in status_commands:
-                await self.send_command(cmd)
-                await asyncio.sleep(0.2)
+            _LOGGER.info("Sending %d pump status commands and waiting for responses", len(status_commands))
+            responses_received = 0
+            for idx, cmd in enumerate(status_commands, 1):
+                _LOGGER.debug("Sending pump status command %d/%d", idx, len(status_commands))
+                response = await self.send_command(cmd, wait_for_response=True, timeout=3.0)
+                if response:
+                    responses_received += 1
+                    _LOGGER.debug("Got response %d/%d", responses_received, len(status_commands))
+                else:
+                    _LOGGER.warning("No response for command %d/%d", idx, len(status_commands))
 
-            await asyncio.sleep(1)
-            _LOGGER.debug("Pump status read complete")
+                # Small delay between commands
+                await asyncio.sleep(0.1)
+
+            _LOGGER.info(
+                "Pump status read complete. Received %d/%d responses. Data: %s",
+                responses_received,
+                len(status_commands),
+                self._data
+            )
             return self._data
         except Exception as ex:
             _LOGGER.error("Failed to read pump status: %s", ex, exc_info=True)
@@ -309,10 +463,10 @@ class GrundfosDevice:
         if self.client and self.client.is_connected:
             try:
                 # Stop notifications if they were started
-                if self.notify_char_uuid:
+                if self._notify_char:
                     try:
-                        await self.client.stop_notify(self.notify_char_uuid)
-                        _LOGGER.debug("Stopped notifications on %s", self.notify_char_uuid)
+                        await self.client.stop_notify(self._notify_char)
+                        _LOGGER.debug("Stopped notifications on %s", self._notify_char.uuid)
                     except Exception as ex:
                         _LOGGER.warning("Error stopping notifications: %s", ex)
 
