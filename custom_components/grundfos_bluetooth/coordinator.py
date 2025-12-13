@@ -29,6 +29,7 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.device_address = entry.data[CONF_ADDRESS]
         self.device: GrundfosDevice | None = None
         self._ble_device: BLEDevice | None = None
+        self._device_info_read: bool = False  # Track if device info has been read
 
         # Get scan interval from options, fallback to default
         scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -87,8 +88,8 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _ensure_connection(self) -> None:
         """Ensure the device is connected."""
-        if not self._ble_device:
-            # Scan for device
+        # If device is not connected, always rescan to get fresh BLEDevice object
+        if not self.device or not self.device.is_connected:
             _LOGGER.debug("Scanning for device %s", self.device_address)
             self._ble_device = await BleakScanner.find_device_by_address(
                 self.device_address, timeout=10.0
@@ -99,6 +100,9 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         if not self.device:
             self.device = GrundfosDevice(self._ble_device)
+        else:
+            # Update existing device with fresh BLEDevice object
+            self.device.ble_device = self._ble_device
 
         if not self.device.is_connected:
             _LOGGER.debug("Connecting to device")
@@ -106,8 +110,13 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not connected:
                 raise UpdateFailed("Failed to connect to device")
 
-            # Read device info on first connect
-            await self.device.read_device_info()
+            # Read device info only on first connect (device info doesn't change)
+            if not self._device_info_read:
+                _LOGGER.debug("Reading device info for the first time")
+                await self.device.read_device_info()
+                self._device_info_read = True
+            else:
+                _LOGGER.debug("Skipping device info read (already read previously)")
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
