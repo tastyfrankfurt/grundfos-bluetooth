@@ -40,7 +40,7 @@ anyio==4.12.0
     # via
     #   httpx
     #   openai
-astral==3.2
+astral==2.2
     # via homeassistant
 async-interrupt==1.2.2
     # via
@@ -69,7 +69,6 @@ bcrypt==5.0.0
     # via homeassistant
 bleak==2.0.0
     # via
-    #   grundfos-bluetooth (pyproject.toml)
     #   bleak-retry-connector
     #   bluetooth-adapters
     #   habluetooth
@@ -163,7 +162,7 @@ hass-nabucasa==1.7.0
     # via homeassistant
 hf-xet==1.2.0
     # via huggingface-hub
-home-assistant-bluetooth==2.0.0
+home-assistant-bluetooth==1.13.1
     # via homeassistant
 homeassistant==2025.12.3
     # via grundfos-bluetooth (pyproject.toml)
@@ -373,7 +372,7 @@ voluptuous==0.15.2
     #   homeassistant
     #   voluptuous-openapi
     #   voluptuous-serialize
-voluptuous-openapi==0.2.0
+voluptuous-openapi==0.1.0
     # via homeassistant
 voluptuous-serialize==2.7.0
     # via homeassistant

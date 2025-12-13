@@ -5,12 +5,8 @@ description = "Home Assistant integration for Grundfos Bluetooth pumps"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "bleak>=2.0.0",
     "homeassistant>=2025.12.0",
     "voluptuous>=0.15.2",
-    "voluptuous-openapi>=0.2.0",
-    "astral==3.2",
-    "home-assistant-bluetooth==2.0.0",
 ]
 
 [project.optional-dependencies]

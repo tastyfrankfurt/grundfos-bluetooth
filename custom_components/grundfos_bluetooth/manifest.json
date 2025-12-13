@@ -3,9 +3,9 @@
   "name": "Grundfos Bluetooth",
   "codeowners": [],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["bluetooth"],
   "documentation": "https://github.com/tastyfrankfurt/grundfos-bluetooth",
   "iot_class": "local_polling",
-  "requirements": ["bleak>=2.0.0"],
-  "version": "0.1.3"
+  "requirements": [],
+  "version": "0.1.4"
 }
