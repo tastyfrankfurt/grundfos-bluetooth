@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Grundfos Bluetooth Device",
+        "description": "Select your Grundfos pump from the discovered devices or enter the Bluetooth address manually.",
+        "data": {
+          "address": "Bluetooth Address",
+          "name": "Device Name"
+        }
+      },
+      "confirm": {
+        "title": "Confirm Grundfos Device",
+        "description": "Confirm adding this Grundfos pump to Home Assistant.",
+        "data": {
+          "name": "Device Name"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the device",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "no_address": "No device address found"
+    }
+  }
+}

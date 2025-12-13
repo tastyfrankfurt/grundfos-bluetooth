@@ -1,0 +1,11 @@
+{
+  "domain": "grundfos_bluetooth",
+  "name": "Grundfos Bluetooth",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/tastyfrankfurt/grundfos-bluetooth",
+  "iot_class": "local_polling",
+  "requirements": ["bleak>=2.0.0"],
+  "version": "0.1.0"
+}
