@@ -48,55 +48,89 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Config entry is disabled, skipping update")
             raise UpdateFailed("Integration is disabled")
 
-        # Try up to 2 times in case device disconnected
-        for attempt in range(2):
+        # Try up to 3 times in case device disconnected
+        max_attempts = 3
+        for attempt in range(max_attempts):
             try:
                 # Ensure device is connected
                 if not self.device or not self.device.is_connected:
+                    _LOGGER.debug("Device not connected, attempting to connect (attempt %d/%d)",
+                                 attempt + 1, max_attempts)
                     await self._ensure_connection()
 
                 if not self.device or not self.device.is_connected:
-                    raise UpdateFailed("Device not connected")
+                    raise UpdateFailed("Device not connected after connection attempt")
 
                 # Read pump status
+                _LOGGER.debug("Reading pump status")
                 await self.device.read_pump_status()
 
                 # Get current data
                 data = self.device.get_data()
 
-                _LOGGER.debug("Updated data: %s", data)
+                if not data:
+                    _LOGGER.warning("No data received from device")
+                    # Don't fail completely, just return empty dict for now
+                    return {}
+
+                _LOGGER.debug("Successfully updated data: %s", data)
                 return data
 
             except (RuntimeError, UpdateFailed) as err:
-                _LOGGER.warning("Error on attempt %d: %s", attempt + 1, err)
+                _LOGGER.warning("Error on attempt %d/%d: %s", attempt + 1, max_attempts, err)
 
                 # Reset connection state for retry
                 if self.device:
-                    self.device.client = None
+                    try:
+                        # Try to disconnect cleanly
+                        if self.device.is_connected:
+                            await self.device.disconnect()
+                    except Exception as disconnect_err:
+                        _LOGGER.debug("Error during disconnect: %s", disconnect_err)
+                    finally:
+                        self.device.client = None
+
                 self._ble_device = None
 
                 # If this was the last attempt, raise the error
-                if attempt == 1:
-                    _LOGGER.error("Error updating data after retries: %s", err)
+                if attempt == max_attempts - 1:
+                    _LOGGER.error("Error updating data after %d attempts: %s", max_attempts, err)
                     raise UpdateFailed(f"Error communicating with device: {err}") from err
 
-                # Wait a bit before retrying
-                await asyncio.sleep(1)
+                # Wait progressively longer before retrying (exponential backoff)
+                wait_time = 2 ** attempt  # 1s, 2s, 4s
+                _LOGGER.debug("Waiting %d seconds before retry", wait_time)
+                await asyncio.sleep(wait_time)
 
         # Should never reach here, but just in case
-        raise UpdateFailed("Failed to update data")
+        raise UpdateFailed("Failed to update data after all attempts")
 
     async def _ensure_connection(self) -> None:
         """Ensure the device is connected."""
         # If device is not connected, always rescan to get fresh BLEDevice object
         if not self.device or not self.device.is_connected:
-            _LOGGER.debug("Scanning for device %s", self.device_address)
-            self._ble_device = await BleakScanner.find_device_by_address(
-                self.device_address, timeout=10.0
-            )
+            _LOGGER.info("Device not connected, scanning for %s", self.device_address)
+
+            # Try scanning with retries
+            max_scan_attempts = 3
+            for scan_attempt in range(max_scan_attempts):
+                self._ble_device = await BleakScanner.find_device_by_address(
+                    self.device_address, timeout=15.0
+                )
+
+                if self._ble_device:
+                    _LOGGER.debug("Found device on scan attempt %d", scan_attempt + 1)
+                    break
+
+                if scan_attempt < max_scan_attempts - 1:
+                    _LOGGER.debug("Device not found, retrying scan (attempt %d/%d)",
+                                 scan_attempt + 1, max_scan_attempts)
+                    await asyncio.sleep(2)
 
             if not self._ble_device:
-                raise UpdateFailed(f"Device {self.device_address} not found")
+                raise UpdateFailed(
+                    f"Device {self.device_address} not found after {max_scan_attempts} scan attempts"
+                )
 
         if not self.device:
             self.device = GrundfosDevice(self._ble_device)
@@ -105,14 +139,22 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.device.ble_device = self._ble_device
 
         if not self.device.is_connected:
-            _LOGGER.debug("Connecting to device")
+            _LOGGER.info("Connecting to device %s", self.device_address)
             connected = await self.device.connect()
             if not connected:
                 raise UpdateFailed("Failed to connect to device")
 
+            # Give connection time to stabilize
+            _LOGGER.debug("Waiting for connection to stabilize")
+            await asyncio.sleep(1.5)
+
+            # Verify connection is still active after stabilization delay
+            if not self.device.is_connected:
+                raise UpdateFailed("Device disconnected during stabilization period")
+
             # Read device info only on first connect (device info doesn't change)
             if not self._device_info_read:
-                _LOGGER.debug("Reading device info for the first time")
+                _LOGGER.info("Reading device info for the first time")
                 await self.device.read_device_info()
                 self._device_info_read = True
             else:

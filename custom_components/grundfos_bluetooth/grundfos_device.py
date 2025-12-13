@@ -35,13 +35,16 @@ class GrundfosDevice:
     async def connect(self) -> bool:
         """Connect to the device."""
         try:
-            _LOGGER.debug("Connecting to %s", self.ble_device.address)
+            _LOGGER.info("Attempting to connect to %s (name: %s)",
+                        self.ble_device.address, self.ble_device.name)
             self.client = await establish_connection(
                 BleakClient,
                 self.ble_device,
                 self.ble_device.address,
                 disconnected_callback=self._disconnected_callback,
             )
+
+            _LOGGER.info("Successfully established connection to %s", self.ble_device.address)
 
             # Discover characteristics
             await self._discover_characteristics()
@@ -55,9 +58,10 @@ class GrundfosDevice:
             else:
                 _LOGGER.warning("No notify characteristic found - notifications disabled")
 
+            _LOGGER.info("Connection to %s fully established and ready", self.ble_device.address)
             return True
         except (BleakError, asyncio.TimeoutError) as ex:
-            _LOGGER.error("Failed to connect to device: %s", ex)
+            _LOGGER.error("Failed to connect to device %s: %s", self.ble_device.address, ex, exc_info=True)
             return False
 
     def _disconnected_callback(self, client: BleakClient) -> None:
@@ -207,13 +211,16 @@ class GrundfosDevice:
         """Send a command to the device."""
         # Check client connection
         if not self.client:
+            _LOGGER.error("Cannot send command: BLE client not initialized")
             raise RuntimeError("BLE client not initialized")
 
         if not self.client.is_connected:
+            _LOGGER.error("Cannot send command: Device not connected to BLE")
             raise RuntimeError("Device not connected to BLE")
 
         # Check if write characteristic was discovered
         if not self.write_char_uuid:
+            _LOGGER.error("Cannot send command: Write characteristic not found")
             raise RuntimeError(
                 "Write characteristic not found - characteristic discovery may have failed"
             )
@@ -226,7 +233,7 @@ class GrundfosDevice:
                 )
                 _LOGGER.debug("Command sent successfully")
             except BleakError as ex:
-                _LOGGER.error("Failed to send command via BLE: %s", ex)
+                _LOGGER.error("Failed to send command via BLE: %s", ex, exc_info=True)
                 # Mark as disconnected
                 self.client = None
                 raise RuntimeError(f"BLE write failed: {ex}") from ex
