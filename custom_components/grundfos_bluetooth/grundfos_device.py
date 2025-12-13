@@ -431,14 +431,22 @@ class GrundfosDevice:
         # This MUST be sent first or device will ignore subsequent commands
         try:
             init_cmd = bytes.fromhex("2707fff802039495964f91")
-            _LOGGER.debug("Sending initialization command: %s", init_cmd.hex())
-            await self.send_command(init_cmd, wait_for_response=False)
+            _LOGGER.info("Sending INIT command and waiting for response: %s", init_cmd.hex())
 
-            # Wait for init response before sending queries
-            await asyncio.sleep(0.2)
+            # WAIT for init response - this might be critical!
+            init_response = await self.send_command(init_cmd, wait_for_response=True, timeout=3.0)
+
+            if init_response:
+                _LOGGER.info("✅ Received init response (%d bytes): %s", len(init_response), init_response.hex())
+            else:
+                _LOGGER.warning("⚠️  No init response received - device may not respond to subsequent commands")
+
+            # Additional delay after init to let device be ready
+            await asyncio.sleep(0.3)
+
         except Exception as ex:
-            _LOGGER.warning("Failed to send init command: %s", ex)
-            return  # Can't proceed without successful init
+            _LOGGER.warning("Failed to send/receive init command: %s", ex)
+            # Continue anyway - maybe init isn't required
 
         # Step 2: Send device info query commands
         commands = {
@@ -453,15 +461,26 @@ class GrundfosDevice:
                 await self.send_command(cmd_bytes, wait_for_response=False)
 
                 # Small delay between commands to let device process
-                await asyncio.sleep(0.15)
+                await asyncio.sleep(0.2)
 
             except Exception as ex:
                 _LOGGER.warning("Failed to send %s command: %s", cmd_name, ex)
                 # Continue with other commands even if one fails
 
-        # Wait for all notifications to arrive
-        _LOGGER.debug("Waiting for device info notifications...")
-        await asyncio.sleep(0.5)
+        # Wait LONGER for all notifications to arrive (increased from 0.5s to 1.5s)
+        _LOGGER.info("⏳ Waiting 1.5 seconds for device info notifications...")
+        await asyncio.sleep(1.5)
+
+        # Log what we received
+        if "device_name" in self._data:
+            _LOGGER.info("✅ Successfully retrieved device_name: %s", self._data["device_name"])
+        else:
+            _LOGGER.warning("⚠️  device_name NOT received")
+
+        if "serial_number" in self._data:
+            _LOGGER.info("✅ Successfully retrieved serial_number: %s", self._data["serial_number"])
+        else:
+            _LOGGER.warning("⚠️  serial_number NOT received")
 
     async def read_device_info(self) -> dict[str, Any]:
         """Read device information (model, serial, firmware)."""
