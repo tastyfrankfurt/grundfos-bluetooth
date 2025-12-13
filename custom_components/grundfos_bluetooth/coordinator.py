@@ -14,7 +14,7 @@ from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .grundfos_device import GrundfosDevice
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,11 +30,14 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.device: GrundfosDevice | None = None
         self._ble_device: BLEDevice | None = None
 
+        # Get scan interval from options, fallback to default
+        scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            update_interval=timedelta(seconds=scan_interval),
         )
 
     async def _async_update_data(self) -> dict[str, Any]:

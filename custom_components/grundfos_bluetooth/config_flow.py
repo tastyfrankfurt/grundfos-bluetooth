@@ -9,9 +9,10 @@ from bleak import BleakScanner
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_ADDRESS, CONF_NAME
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DEFAULT_NAME, DOMAIN
+from .const import CONF_SCAN_INTERVAL, DEFAULT_NAME, DEFAULT_SCAN_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +25,14 @@ class GrundfosConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._discovered_devices: dict[str, Any] = {}
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> OptionsFlowHandler:
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -145,3 +154,32 @@ class GrundfosConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception as ex:
             _LOGGER.error("Error scanning for devices: %s", ex)
             return {}
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for Grundfos Bluetooth."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_SCAN_INTERVAL,
+                        default=self.config_entry.options.get(
+                            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=10, max=300)),
+                }
+            ),
+        )

@@ -25,5 +25,19 @@
       "already_configured": "Device is already configured",
       "no_address": "No device address found"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Grundfos Bluetooth Options",
+        "description": "Configure options for your Grundfos pump.",
+        "data": {
+          "scan_interval": "Update interval (seconds)"
+        },
+        "data_description": {
+          "scan_interval": "How often to poll the pump for updated data (10-300 seconds)"
+        }
+      }
+    }
   }
 }

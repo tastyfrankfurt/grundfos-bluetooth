@@ -13,6 +13,7 @@ GRUNDFOS_CHAR_HANDLE = 0x0016
 # Configuration
 CONF_ADDRESS = "address"
 CONF_NAME = "name"
+CONF_SCAN_INTERVAL = "scan_interval"
 
 # Default values
 DEFAULT_NAME = "Grundfos Pump"
