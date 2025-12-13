@@ -68,11 +68,12 @@ class GrundfosBaseSensor(CoordinatorEntity[GrundfosDataUpdateCoordinator], Senso
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # Entity is available if coordinator has successfully updated and device is connected
+        # Entity is available if coordinator has successfully updated and has data
+        # Note: We don't require device.is_connected because coordinator disconnects
+        # after each successful update to prevent timeout issues
         return (
             self.coordinator.last_update_success
-            and self.coordinator.device is not None
-            and self.coordinator.device.is_connected
+            and self.coordinator.data is not None
         )
 
 
@@ -127,7 +128,7 @@ class GrundfosSerialSensor(GrundfosBaseSensor):
     @property
     def native_value(self) -> str | None:
         """Return the state of the sensor."""
-        return self.coordinator.data.get("serial")
+        return self.coordinator.data.get("serial_number")
 
 
 class GrundfosFirmwareSensor(GrundfosBaseSensor):

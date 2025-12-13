@@ -168,7 +168,6 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise UpdateFailed("Device disconnected during stabilization period")
 
             # Read device info only on first connect (device info doesn't change)
-            # Device name is now included in standard GATT characteristics
             # Also re-read if data is empty (device object was recreated)
             device_data = self.device.get_data()
             if not self._device_info_read or not device_data:
@@ -176,10 +175,16 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.info("Device data is empty, re-reading device info")
                 else:
                     _LOGGER.info("Reading device info for the first time")
+
+                # Read standard GATT characteristics (manufacturer, model, firmware)
                 await self.device.read_device_info()
+
+                # Read custom device info (device_name and serial_number via custom commands)
+                await self.device.read_custom_device_info()
+
                 self._device_info_read = True
             else:
-                _LOGGER.debug("Skipping GATT device info read (already read previously)")
+                _LOGGER.debug("Skipping device info read (already read previously)")
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
