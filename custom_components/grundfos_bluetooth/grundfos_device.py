@@ -111,23 +111,7 @@ class GrundfosDevice:
 
                     # Verify notifications are actually enabled
                     _LOGGER.debug("Notification handler registered: %s", self._notification_handler.__name__)
-
-                    # TEST: Manually call notification handler to verify it works
-                    _LOGGER.info("🧪 Testing notification handler by calling it manually...")
-                    try:
-                        test_data = bytearray.fromhex("2407f8e7020339010041cf")  # Expected init response
-                        self._notification_handler(self._notify_char, test_data)
-                        _LOGGER.info("✅ Notification handler test successful - handler is working!")
-                    except Exception as handler_ex:
-                        _LOGGER.error("❌ Notification handler test FAILED: %s", handler_ex, exc_info=True)
-
-                    # TEST: Try reading the characteristic to trigger any potential notification
-                    # Some devices send a notification when you read a characteristic
-                    try:
-                        test_value = await client.read_gatt_char(self._notify_char)
-                        _LOGGER.info("📥 Test read from notify characteristic: %s", test_value.hex() if test_value else "None")
-                    except Exception as test_ex:
-                        _LOGGER.debug("Could not read notify characteristic (this is OK): %s", test_ex)
+                    _LOGGER.info("✅ Notifications enabled - ready to receive device responses")
                 except BleakError as ex:
                     _LOGGER.error(
                         "Failed to start notifications on %s: %s",
@@ -454,33 +438,48 @@ class GrundfosDevice:
         """
         _LOGGER.info("📤 Sending device info commands to retrieve name and serial number")
 
-        # EXPERIMENTAL: Skip INIT command - it seems to cause disconnection
-        # The btsnoop might be from a different app/context where INIT is needed
-        # Let's try sending device info commands directly
-        _LOGGER.info("⚠️  SKIPPING INIT command (causes disconnection) - sending device info commands directly")
+        # EXPERIMENTAL: Send INIT but don't wait - just fire and forget
+        # The test read showed the INIT pattern in the response
+        try:
+            init_cmd = bytes.fromhex("2707fff802039495964f91")
+            _LOGGER.info("Sending INIT command (fire-and-forget): %s", init_cmd.hex())
+            await self.send_command(init_cmd, wait_for_response=False)
+            # Very short delay to let it process
+            await asyncio.sleep(0.1)
+            _LOGGER.info("✅ INIT command sent, proceeding to device info commands")
+        except Exception as ex:
+            _LOGGER.warning("Failed to send INIT: %s - continuing anyway", ex)
 
-        # Step 2: Send device info query commands
-        commands = {
-            "device_name": bytes.fromhex("2705e7f80701114009"),      # Cmd 0x11
-            "serial_part1": bytes.fromhex("2705e7f8070108c311"),     # Cmd 0x08
-            "serial_part2": bytes.fromhex("2705e7f8070109d330"),     # Cmd 0x09
-        }
+        # Step 2: Send device info query commands ONE AT A TIME with response wait
+        # This matches the btsnoop pattern: Send → Wait for response → Send next
+        commands = [
+            ("device_name", bytes.fromhex("2705e7f80701114009")),      # Cmd 0x11
+            ("serial_part1", bytes.fromhex("2705e7f8070108c311")),     # Cmd 0x08
+            ("serial_part2", bytes.fromhex("2705e7f8070109d330")),     # Cmd 0x09
+        ]
 
-        for cmd_name, cmd_bytes in commands.items():
+        for cmd_name, cmd_bytes in commands:
             try:
-                _LOGGER.debug("Sending %s command: %s", cmd_name, cmd_bytes.hex())
-                await self.send_command(cmd_bytes, wait_for_response=False)
+                _LOGGER.info("📤 Sending %s command and waiting for response: %s", cmd_name, cmd_bytes.hex())
 
-                # Small delay between commands to let device process
-                await asyncio.sleep(0.2)
+                # Send and WAIT for response (like btsnoop shows)
+                response = await self.send_command(cmd_bytes, wait_for_response=True, timeout=1.0)
+
+                if response:
+                    _LOGGER.info("✅ Received %s response (%d bytes): %s", cmd_name, len(response), response.hex())
+                else:
+                    _LOGGER.warning("⚠️  No response for %s", cmd_name)
+
+                # Small delay before next command
+                await asyncio.sleep(0.1)
 
             except Exception as ex:
-                _LOGGER.warning("Failed to send %s command: %s", cmd_name, ex)
+                _LOGGER.warning("Failed to send/receive %s command: %s", cmd_name, ex)
                 # Continue with other commands even if one fails
 
-        # Wait LONGER for all notifications to arrive (increased from 0.5s to 1.5s)
-        _LOGGER.info("⏳ Waiting 1.5 seconds for device info notifications...")
-        await asyncio.sleep(1.5)
+        # Give extra time for any delayed notifications
+        _LOGGER.info("⏳ Waiting 0.5 seconds for any delayed notifications...")
+        await asyncio.sleep(0.5)
 
         # Log what we received
         if "device_name" in self._data:
