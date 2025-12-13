@@ -1,6 +1,9 @@
 # Grundfos Bluetooth Integration for Home Assistant
 
-This custom component allows you to integrate Grundfos water pumps (like the SCALA series) with Home Assistant via Bluetooth Low Energy (BLE).
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/tastyfrankfurt/grundfos-bluetooth)
+![GitHub](https://img.shields.io/github/license/tastyfrankfurt/grundfos-bluetooth)
+
+This custom component allows you to integrate Grundfos water pumps (only tested with SCALA series) with Home Assistant via Bluetooth Low Energy (BLE).
 
 ## Features
 
@@ -13,9 +16,14 @@ This custom component allows you to integrate Grundfos water pumps (like the SCA
 
 ### HACS (Recommended)
 
-1. Add this repository to HACS as a custom repository
-2. Install "Grundfos Bluetooth" through HACS
-3. Restart Home Assistant
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tastyfrankfurt&repository=grundfos-bluetooth)
+
+1. Ensure that [HACS](https://hacs.xyz/) is installed.
+2. Go to HACS > Integrations.
+3. Click on the three dots in the top right corner and select "Custom repositories".
+4. Add the repository URL: `https://github.com/tastyfrankfurt/grundfos-bluetooth` and select "Integration".
+5. Find "Grundfos Bluetooth" in the list and click "Install".
+6. Restart Home Assistant after installation.
 
 ### Manual Installation
 
@@ -32,66 +40,9 @@ This custom component allows you to integrate Grundfos water pumps (like the SCA
 ## Supported Devices
 
 This integration has been tested with:
-- Grundfos SCALA1 3-45 pumps
+- Grundfos SCALA1 1 pump
 
 Other Grundfos pumps with Bluetooth may work but have not been tested.
-
-## Protocol Reverse Engineering
-
-This integration was built by reverse-engineering the Bluetooth protocol using btsnoop HCI logs. The protocol uses custom Grundfos service UUIDs:
-
-- Service 1: `9d41001835d6f4adad60e7bd8dc491c0`
-- Service 2: `9d41001935d6f4adad60e7bd8dc491c0`
-
-Commands are sent via write operations on characteristic handle `0x0016`, and responses are received through notifications.
-
-### Command Format
-
-Commands follow this general structure:
-- Header: `0x27`
-- Length: 1 byte
-- Command type: varies
-- Payload: varies
-- Checksum: CRC16 (last 2 bytes)
-
-### Response Format
-
-Responses follow this structure:
-- Header: `0x24`
-- Length: 1 byte
-- Response markers: `0xf8 0xe7`
-- Data: varies
-- Checksum: CRC16 (last 2 bytes)
-
-## Development
-
-### Analyzing Bluetooth Captures
-
-A btsnoop parser script is included (`parse_btsnoop.py`) to help reverse-engineer the protocol:
-
-```bash
-python3 parse_btsnoop.py
-```
-
-This will parse `btsnoop_hci.log` and display:
-- Discovered BLE services and characteristics
-- Command/response sequences
-- Decoded device information
-
-### Adding New Features
-
-To add support for new pump features:
-
-1. Capture a btsnoop log while using the official Grundfos app
-2. Run the parser to identify new commands
-3. Add command definitions to `grundfos_device.py`
-4. Create corresponding sensors/switches in the appropriate platform files
-
-## Known Limitations
-
-- Pump control commands need further reverse engineering
-- Some sensor readings are not yet decoded
-- Requires Bluetooth adapter on Home Assistant host
 
 ## Troubleshooting
 
@@ -120,11 +71,37 @@ logger:
 
 ## Contributing
 
-Contributions are welcome! If you have a different Grundfos pump model and can provide btsnoop logs, please open an issue or pull request.
+Contributions are welcome! If you have a different Grundfos pump model, please open an issue or pull request.
 
 ## License
 
-This project is provided as-is for educational and personal use. Grundfos is a trademark of Grundfos Holding A/S.
+This project is licensed under the MIT License - see below for details.
+
+```
+MIT License
+
+Copyright (c) 2025
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+Grundfos is a trademark of Grundfos Holding A/S.
 
 ## Credits
 

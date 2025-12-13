@@ -163,7 +163,7 @@ hass-nabucasa==1.7.0
     # via homeassistant
 hf-xet==1.2.0
     # via huggingface-hub
-home-assistant-bluetooth==1.13.1
+home-assistant-bluetooth==2.0.0
     # via homeassistant
 homeassistant==2025.12.3
     # via grundfos-bluetooth (pyproject.toml)
