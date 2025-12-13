@@ -28,8 +28,9 @@ class GrundfosDevice:
         self.service_uuid_1 = "9d41001835d6f4adad60e7bd8dc491c0"
         self.service_uuid_2 = "9d41001935d6f4adad60e7bd8dc491c0"
 
-        # Main communication characteristic handle (0x0016 from btsnoop)
-        self.main_char_uuid = None  # Will be discovered during connect
+        # Main communication characteristics (may be separate for notify/write)
+        self.notify_char_uuid = None  # Characteristic for notifications
+        self.write_char_uuid = None  # Characteristic for writing commands
 
     async def connect(self) -> bool:
         """Connect to the device."""
@@ -46,11 +47,13 @@ class GrundfosDevice:
             await self._discover_characteristics()
 
             # Start listening for notifications
-            if self.main_char_uuid:
+            if self.notify_char_uuid:
                 await self.client.start_notify(
-                    self.main_char_uuid, self._notification_handler
+                    self.notify_char_uuid, self._notification_handler
                 )
-                _LOGGER.debug("Started notifications on %s", self.main_char_uuid)
+                _LOGGER.info("Started notifications on %s", self.notify_char_uuid)
+            else:
+                _LOGGER.warning("No notify characteristic found - notifications disabled")
 
             return True
         except (BleakError, asyncio.TimeoutError) as ex:
@@ -65,20 +68,75 @@ class GrundfosDevice:
     async def _discover_characteristics(self) -> None:
         """Discover device characteristics."""
         if not self.client or not self.client.is_connected:
+            _LOGGER.error("Cannot discover characteristics - client not connected")
             return
 
-        # Find the main communication characteristic
-        # Based on btsnoop, this is in one of the Grundfos services
-        for service in self.client.services:
-            _LOGGER.debug("Service: %s", service.uuid)
-            for char in service.characteristics:
-                _LOGGER.debug("  Characteristic: %s - %s", char.uuid, char.properties)
+        _LOGGER.info("Discovering characteristics for device %s", self.ble_device.address)
 
-                # Look for notify + write characteristics (typical for bidirectional comms)
+        notify_candidates = []
+        write_candidates = []
+        combined_candidates = []
+
+        # Scan all services and characteristics
+        for service in self.client.services:
+            _LOGGER.info("Service: %s (UUID: %s)", service.description, service.uuid)
+
+            for char in service.characteristics:
+                props_str = ", ".join(char.properties)
+                _LOGGER.info(
+                    "  Characteristic: %s (UUID: %s) - Properties: [%s]",
+                    char.description,
+                    char.uuid,
+                    props_str,
+                )
+
+                # Check for combined notify+write characteristic (ideal)
                 if "notify" in char.properties and "write" in char.properties:
-                    self.main_char_uuid = char.uuid
-                    _LOGGER.info("Found main characteristic: %s", char.uuid)
-                    break
+                    combined_candidates.append(char)
+                    _LOGGER.info("    → Found COMBINED notify+write characteristic")
+
+                # Track notify-capable characteristics
+                if "notify" in char.properties:
+                    notify_candidates.append(char)
+                    _LOGGER.debug("    → Can receive notifications")
+
+                # Track write-capable characteristics (write or write-without-response)
+                if "write" in char.properties or "write-without-response" in char.properties:
+                    write_candidates.append(char)
+                    _LOGGER.debug("    → Can write commands")
+
+        # Prioritize combined characteristic, then separate characteristics
+        if combined_candidates:
+            # Use the same characteristic for both notify and write
+            self.notify_char_uuid = combined_candidates[0].uuid
+            self.write_char_uuid = combined_candidates[0].uuid
+            _LOGGER.info(
+                "Using combined characteristic for notify+write: %s",
+                combined_candidates[0].uuid,
+            )
+        else:
+            # Use separate characteristics
+            if notify_candidates:
+                self.notify_char_uuid = notify_candidates[0].uuid
+                _LOGGER.info("Using notify characteristic: %s", self.notify_char_uuid)
+            else:
+                _LOGGER.warning("No notify characteristic found!")
+
+            if write_candidates:
+                self.write_char_uuid = write_candidates[0].uuid
+                _LOGGER.info("Using write characteristic: %s", self.write_char_uuid)
+            else:
+                _LOGGER.warning("No write characteristic found!")
+
+        # Summary
+        if self.notify_char_uuid and self.write_char_uuid:
+            _LOGGER.info("Characteristic discovery successful")
+        else:
+            _LOGGER.error(
+                "Characteristic discovery incomplete - notify: %s, write: %s",
+                self.notify_char_uuid,
+                self.write_char_uuid,
+            )
 
     def _notification_handler(self, sender: int, data: bytes) -> None:
         """Handle notifications from the device."""
@@ -147,23 +205,36 @@ class GrundfosDevice:
 
     async def send_command(self, command: bytes) -> None:
         """Send a command to the device."""
-        if not self.client or not self.client.is_connected or not self.main_char_uuid:
-            raise RuntimeError("Device not connected")
+        # Check client connection
+        if not self.client:
+            raise RuntimeError("BLE client not initialized")
+
+        if not self.client.is_connected:
+            raise RuntimeError("Device not connected to BLE")
+
+        # Check if write characteristic was discovered
+        if not self.write_char_uuid:
+            raise RuntimeError(
+                "Write characteristic not found - characteristic discovery may have failed"
+            )
 
         async with self._lock:
             try:
-                _LOGGER.debug("Sending command: %s", command.hex())
+                _LOGGER.debug("Sending command to %s: %s", self.write_char_uuid, command.hex())
                 await self.client.write_gatt_char(
-                    self.main_char_uuid, command, response=False
+                    self.write_char_uuid, command, response=False
                 )
+                _LOGGER.debug("Command sent successfully")
             except BleakError as ex:
-                _LOGGER.error("Failed to send command: %s", ex)
+                _LOGGER.error("Failed to send command via BLE: %s", ex)
                 # Mark as disconnected
                 self.client = None
-                raise RuntimeError(f"Failed to send command: {ex}") from ex
+                raise RuntimeError(f"BLE write failed: {ex}") from ex
 
     async def read_device_info(self) -> dict[str, Any]:
         """Read device information (model, serial, firmware)."""
+        _LOGGER.debug("Reading device info from %s", self.ble_device.address)
+
         try:
             # Based on btsnoop, device info commands start with 2705e7f807...
             # Command pattern: 27 05 e7 f8 07 01 [param] [checksum]
@@ -176,20 +247,24 @@ class GrundfosDevice:
                 bytes.fromhex("2705e7f807013ad500"),  # Firmware 2
             ]
 
-            for cmd in commands:
+            _LOGGER.debug("Sending %d device info commands", len(commands))
+            for idx, cmd in enumerate(commands, 1):
                 await self.send_command(cmd)
                 await asyncio.sleep(0.2)  # Wait for response
 
             # Give time for notifications to arrive
             await asyncio.sleep(1)
 
+            _LOGGER.info("Device info read complete. Data: %s", self._data)
             return self._data
         except Exception as ex:
-            _LOGGER.error("Failed to read device info: %s", ex)
+            _LOGGER.error("Failed to read device info: %s", ex, exc_info=True)
             raise RuntimeError(f"Failed to read device info: {ex}") from ex
 
     async def read_pump_status(self) -> dict[str, Any]:
         """Read pump status and sensor data."""
+        _LOGGER.debug("Reading pump status from %s", self.ble_device.address)
+
         try:
             # Based on btsnoop analysis, status commands use pattern:
             # 2707e7f80a03[param][checksum]
@@ -199,14 +274,16 @@ class GrundfosDevice:
                 bytes.fromhex("2707e7f80a035b00a412a3"),  # Another status
             ]
 
+            _LOGGER.debug("Sending %d pump status commands", len(status_commands))
             for cmd in status_commands:
                 await self.send_command(cmd)
                 await asyncio.sleep(0.2)
 
             await asyncio.sleep(1)
+            _LOGGER.debug("Pump status read complete")
             return self._data
         except Exception as ex:
-            _LOGGER.error("Failed to read pump status: %s", ex)
+            _LOGGER.error("Failed to read pump status: %s", ex, exc_info=True)
             raise RuntimeError(f"Failed to read pump status: {ex}") from ex
 
     def register_notification_callback(self, callback: Callable[[bytes], None]) -> None:
@@ -217,12 +294,18 @@ class GrundfosDevice:
         """Disconnect from the device."""
         if self.client and self.client.is_connected:
             try:
-                if self.main_char_uuid:
-                    await self.client.stop_notify(self.main_char_uuid)
+                # Stop notifications if they were started
+                if self.notify_char_uuid:
+                    try:
+                        await self.client.stop_notify(self.notify_char_uuid)
+                        _LOGGER.debug("Stopped notifications on %s", self.notify_char_uuid)
+                    except Exception as ex:
+                        _LOGGER.warning("Error stopping notifications: %s", ex)
+
                 await self.client.disconnect()
-                _LOGGER.debug("Disconnected from device")
+                _LOGGER.info("Disconnected from device %s", self.ble_device.address)
             except BleakError as ex:
-                _LOGGER.error("Error disconnecting: %s", ex)
+                _LOGGER.error("Error disconnecting from device: %s", ex)
 
     @property
     def is_connected(self) -> bool:
