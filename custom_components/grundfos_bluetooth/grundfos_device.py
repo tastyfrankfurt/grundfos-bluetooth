@@ -437,26 +437,10 @@ class GrundfosDevice:
         """
         _LOGGER.info("📤 Sending device info commands to retrieve name and serial number")
 
-        # Step 1: Send initialization/handshake command (from btsnoop frame 593)
-        # This MUST be sent first or device will ignore subsequent commands
-        try:
-            init_cmd = bytes.fromhex("2707fff802039495964f91")
-            _LOGGER.info("Sending INIT command and waiting for response: %s", init_cmd.hex())
-
-            # WAIT for init response - this might be critical!
-            init_response = await self.send_command(init_cmd, wait_for_response=True, timeout=3.0)
-
-            if init_response:
-                _LOGGER.info("✅ Received init response (%d bytes): %s", len(init_response), init_response.hex())
-            else:
-                _LOGGER.warning("⚠️  No init response received - device may not respond to subsequent commands")
-
-            # Additional delay after init to let device be ready
-            await asyncio.sleep(0.3)
-
-        except Exception as ex:
-            _LOGGER.warning("Failed to send/receive init command: %s", ex)
-            # Continue anyway - maybe init isn't required
+        # EXPERIMENTAL: Skip INIT command - it seems to cause disconnection
+        # The btsnoop might be from a different app/context where INIT is needed
+        # Let's try sending device info commands directly
+        _LOGGER.info("⚠️  SKIPPING INIT command (causes disconnection) - sending device info commands directly")
 
         # Step 2: Send device info query commands
         commands = {

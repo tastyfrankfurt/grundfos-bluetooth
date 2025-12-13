@@ -167,6 +167,11 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not self.device.is_connected:
                 raise UpdateFailed("Device disconnected during stabilization period")
 
+            # EXPERIMENTAL: Send custom commands BEFORE reading GATT characteristics
+            # This matches the flow in the btsnoop where custom commands come first
+            _LOGGER.debug("Sending custom commands for device name and serial number (BEFORE GATT reads)")
+            await self.device.read_custom_device_info()
+
             # Read device info only on first connect (device info doesn't change)
             if not self._device_info_read:
                 _LOGGER.info("Reading device info for the first time")
@@ -174,11 +179,6 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._device_info_read = True
             else:
                 _LOGGER.debug("Skipping GATT device info read (already read previously)")
-
-            # Always send custom commands to retrieve device name and serial number
-            # These use proprietary protocol and should be attempted on every connection
-            _LOGGER.debug("Sending custom commands for device name and serial number")
-            await self.device.read_custom_device_info()
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
