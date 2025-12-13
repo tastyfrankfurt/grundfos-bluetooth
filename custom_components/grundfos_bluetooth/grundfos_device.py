@@ -101,11 +101,16 @@ class GrundfosDevice:
                         raise BleakError(f"Characteristic {self._notify_char.uuid} not found in services")
 
                     _LOGGER.debug("Starting notifications on %s", self._notify_char.uuid)
+                    _LOGGER.debug("Notification handler: %s", self._notification_handler)
+
                     # Use the characteristic object directly
                     await client.start_notify(
                         self._notify_char, self._notification_handler
                     )
-                    _LOGGER.info("Started notifications on %s", self._notify_char.uuid)
+                    _LOGGER.info("✅ Started notifications on %s - handler should be called for any incoming notifications", self._notify_char.uuid)
+
+                    # Verify notifications are actually enabled
+                    _LOGGER.debug("Notification handler registered: %s", self._notification_handler.__name__)
                 except BleakError as ex:
                     _LOGGER.error(
                         "Failed to start notifications on %s: %s",
@@ -210,15 +215,20 @@ class GrundfosDevice:
                 self.write_char_uuid,
             )
 
-    def _notification_handler(self, sender: int, data: bytes) -> None:
-        """Handle notifications from the device."""
+    def _notification_handler(self, sender, data: bytearray) -> None:
+        """Handle notifications from the device.
+
+        Args:
+            sender: The characteristic that sent the notification (BleakGATTCharacteristic or int handle)
+            data: The notification data as bytearray
+        """
         self._notification_count += 1
         _LOGGER.info(
             "📨 NOTIFICATION #%d from %s (%d bytes): %s",
             self._notification_count,
             sender,
             len(data),
-            data.hex()
+            data.hex() if isinstance(data, (bytes, bytearray)) else str(data)
         )
 
         # Add to response queue for command responses
