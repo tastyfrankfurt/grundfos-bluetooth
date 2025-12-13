@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from bleak import BleakClient, BleakError
 from bleak.backends.device import BLEDevice
+from bleak_retry_connector import establish_connection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,8 +35,12 @@ class GrundfosDevice:
         """Connect to the device."""
         try:
             _LOGGER.debug("Connecting to %s", self.ble_device.address)
-            self.client = BleakClient(self.ble_device)
-            await self.client.connect()
+            self.client = await establish_connection(
+                BleakClient,
+                self.ble_device,
+                self.ble_device.address,
+                disconnected_callback=self._disconnected_callback,
+            )
 
             # Discover characteristics
             await self._discover_characteristics()
@@ -51,6 +56,11 @@ class GrundfosDevice:
         except (BleakError, asyncio.TimeoutError) as ex:
             _LOGGER.error("Failed to connect to device: %s", ex)
             return False
+
+    def _disconnected_callback(self, client: BleakClient) -> None:
+        """Handle disconnection."""
+        _LOGGER.warning("Device %s disconnected", self.ble_device.address)
+        self.client = None
 
     async def _discover_characteristics(self) -> None:
         """Discover device characteristics."""
