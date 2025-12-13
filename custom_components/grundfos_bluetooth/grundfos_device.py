@@ -111,6 +111,23 @@ class GrundfosDevice:
 
                     # Verify notifications are actually enabled
                     _LOGGER.debug("Notification handler registered: %s", self._notification_handler.__name__)
+
+                    # TEST: Manually call notification handler to verify it works
+                    _LOGGER.info("🧪 Testing notification handler by calling it manually...")
+                    try:
+                        test_data = bytearray.fromhex("2407f8e7020339010041cf")  # Expected init response
+                        self._notification_handler(self._notify_char, test_data)
+                        _LOGGER.info("✅ Notification handler test successful - handler is working!")
+                    except Exception as handler_ex:
+                        _LOGGER.error("❌ Notification handler test FAILED: %s", handler_ex, exc_info=True)
+
+                    # TEST: Try reading the characteristic to trigger any potential notification
+                    # Some devices send a notification when you read a characteristic
+                    try:
+                        test_value = await client.read_gatt_char(self._notify_char)
+                        _LOGGER.info("📥 Test read from notify characteristic: %s", test_value.hex() if test_value else "None")
+                    except Exception as test_ex:
+                        _LOGGER.debug("Could not read notify characteristic (this is OK): %s", test_ex)
                 except BleakError as ex:
                     _LOGGER.error(
                         "Failed to start notifications on %s: %s",
