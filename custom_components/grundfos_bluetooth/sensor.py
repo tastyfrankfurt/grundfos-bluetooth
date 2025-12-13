@@ -61,8 +61,8 @@ class GrundfosBaseSensor(CoordinatorEntity[GrundfosDataUpdateCoordinator], Senso
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.data.get("name", "Grundfos Pump"),
             manufacturer="Grundfos",
-            model=coordinator.data.get("model", "Unknown"),
-            sw_version=coordinator.data.get("firmware"),
+            model=coordinator.data.get("model", "Unknown") if coordinator.data else "Unknown",
+            sw_version=coordinator.data.get("firmware") if coordinator.data else None,
         )
 
 
