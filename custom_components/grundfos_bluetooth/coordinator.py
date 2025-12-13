@@ -169,8 +169,13 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Read device info only on first connect (device info doesn't change)
             # Device name is now included in standard GATT characteristics
-            if not self._device_info_read:
-                _LOGGER.info("Reading device info for the first time")
+            # Also re-read if data is empty (device object was recreated)
+            device_data = self.device.get_data()
+            if not self._device_info_read or not device_data:
+                if not device_data:
+                    _LOGGER.info("Device data is empty, re-reading device info")
+                else:
+                    _LOGGER.info("Reading device info for the first time")
                 await self.device.read_device_info()
                 self._device_info_read = True
             else:
