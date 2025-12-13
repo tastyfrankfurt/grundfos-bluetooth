@@ -57,13 +57,9 @@ class GrundfosDevice:
 
             _LOGGER.info("Successfully established connection to %s", self.ble_device.address)
 
-            # Ensure services are loaded (force refresh to avoid cache issues)
-            _LOGGER.debug("Ensuring GATT services are loaded...")
-            try:
-                await self.client.get_services()
-                _LOGGER.debug("GATT services loaded successfully")
-            except Exception as ex:
-                _LOGGER.warning("Error getting services (will try to continue): %s", ex)
+            # Services are automatically loaded by BleakClientWithServiceCache
+            # and accessible via self.client.services property
+            _LOGGER.debug("GATT services are available via client.services property")
 
             # Small delay to let services stabilize
             await asyncio.sleep(0.1)
@@ -380,38 +376,55 @@ class GrundfosDevice:
         _LOGGER.info("📖 Reading device info from %s", self.ble_device.address)
 
         try:
-            # Based on btsnoop, device info commands start with 2705e7f807...
-            # Command pattern: 27 05 e7 f8 07 01 [param] [checksum]
+            # Read standard Device Information Service characteristics
+            # These are safe to read and won't cause disconnection
+            device_info_chars = {
+                "00002a29-0000-1000-8000-00805f9b34fb": "manufacturer",
+                "00002a24-0000-1000-8000-00805f9b34fb": "model",
+                "00002a26-0000-1000-8000-00805f9b34fb": "firmware",
+                "00002a27-0000-1000-8000-00805f9b34fb": "hardware_version",
+                "00002a28-0000-1000-8000-00805f9b34fb": "software_version",
+            }
 
-            commands = [
-                bytes.fromhex("2705e7f80701015238"),  # Read command (from btsnoop)
-                bytes.fromhex("2705e7f80701085238"),  # Serial number
-                bytes.fromhex("2705e7f80701095238"),  # Another ID
-                bytes.fromhex("2705e7f80701325408"),  # Firmware 1
-                bytes.fromhex("2705e7f807013ad500"),  # Firmware 2
-            ]
+            _LOGGER.info("Reading standard Device Information Service characteristics")
 
-            _LOGGER.info("Sending %d device info commands and waiting for responses", len(commands))
-            responses_received = 0
-            for idx, cmd in enumerate(commands, 1):
-                _LOGGER.debug("Sending device info command %d/%d", idx, len(commands))
-                response = await self.send_command(cmd, wait_for_response=True, timeout=3.0)
-                if response:
-                    responses_received += 1
-                    _LOGGER.debug("Got response %d/%d", responses_received, len(commands))
-                else:
-                    _LOGGER.warning("No response for command %d/%d", idx, len(commands))
+            for char_uuid, data_key in device_info_chars.items():
+                try:
+                    # Find the characteristic in services
+                    char_found = False
+                    for service in self.client.services:
+                        for char in service.characteristics:
+                            if char.uuid == char_uuid:
+                                char_found = True
+                                _LOGGER.debug("Reading %s characteristic: %s", data_key, char_uuid)
 
-                # Small delay between commands
-                await asyncio.sleep(0.1)
+                                # Read the characteristic value
+                                value = await self.client.read_gatt_char(char)
 
-            _LOGGER.info(
-                "Device info read complete. Received %d/%d responses. Data: %s",
-                responses_received,
-                len(commands),
-                self._data
-            )
+                                # Decode as UTF-8 string (standard for device info characteristics)
+                                decoded_value = value.decode("utf-8", errors="ignore").strip()
+
+                                if decoded_value:
+                                    self._data[data_key] = decoded_value
+                                    _LOGGER.info("✅ Read %s: '%s'", data_key, decoded_value)
+                                else:
+                                    _LOGGER.debug("Empty value for %s", data_key)
+
+                                break
+                        if char_found:
+                            break
+
+                    if not char_found:
+                        _LOGGER.debug("Characteristic %s not found (optional)", char_uuid)
+
+                except Exception as ex:
+                    _LOGGER.warning("Error reading %s: %s", data_key, ex)
+                    # Continue with other characteristics even if one fails
+                    continue
+
+            _LOGGER.info("Device info read complete. Data: %s", self._data)
             return self._data
+
         except Exception as ex:
             _LOGGER.error("Failed to read device info: %s", ex, exc_info=True)
             raise RuntimeError(f"Failed to read device info: {ex}") from ex
@@ -421,35 +434,20 @@ class GrundfosDevice:
         _LOGGER.info("📊 Reading pump status from %s", self.ble_device.address)
 
         try:
-            # Based on btsnoop analysis, status commands use pattern:
-            # 2707e7f80a03[param][checksum]
-
-            status_commands = [
-                bytes.fromhex("2707e7f80a035e00044cb9"),  # Status command from btsnoop
-                bytes.fromhex("2707e7f80a035b00a412a3"),  # Another status
-            ]
-
-            _LOGGER.info("Sending %d pump status commands and waiting for responses", len(status_commands))
-            responses_received = 0
-            for idx, cmd in enumerate(status_commands, 1):
-                _LOGGER.debug("Sending pump status command %d/%d", idx, len(status_commands))
-                response = await self.send_command(cmd, wait_for_response=True, timeout=3.0)
-                if response:
-                    responses_received += 1
-                    _LOGGER.debug("Got response %d/%d", responses_received, len(status_commands))
-                else:
-                    _LOGGER.warning("No response for command %d/%d", idx, len(status_commands))
-
-                # Small delay between commands
-                await asyncio.sleep(0.1)
-
+            # For now, we rely on notifications from the device for status updates
+            # Sending commands causes the device to disconnect, so we need to
+            # figure out the correct protocol/handshake first
             _LOGGER.info(
-                "Pump status read complete. Received %d/%d responses. Data: %s",
-                responses_received,
-                len(status_commands),
+                "Waiting for status updates via notifications. "
+                "Current data: %s",
                 self._data
             )
+
+            # If the device sends periodic notifications, they will be captured
+            # by the notification handler and stored in self._data
+            # For now, just return what we have
             return self._data
+
         except Exception as ex:
             _LOGGER.error("Failed to read pump status: %s", ex, exc_info=True)
             raise RuntimeError(f"Failed to read pump status: {ex}") from ex
