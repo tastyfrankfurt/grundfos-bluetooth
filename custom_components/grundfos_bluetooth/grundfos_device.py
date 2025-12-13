@@ -376,17 +376,21 @@ class GrundfosDevice:
         _LOGGER.info("📖 Reading device info from %s", self.ble_device.address)
 
         try:
-            # Read standard Device Information Service characteristics
-            # These are safe to read and won't cause disconnection
+            # Read standard characteristics from both Device Information Service
+            # and Generic Access Profile
             device_info_chars = {
+                # Generic Access Profile
+                "00002a00-0000-1000-8000-00805f9b34fb": "device_name",
+                # Device Information Service
                 "00002a29-0000-1000-8000-00805f9b34fb": "manufacturer",
                 "00002a24-0000-1000-8000-00805f9b34fb": "model",
+                "00002a25-0000-1000-8000-00805f9b34fb": "serial_number",
                 "00002a26-0000-1000-8000-00805f9b34fb": "firmware",
                 "00002a27-0000-1000-8000-00805f9b34fb": "hardware_version",
                 "00002a28-0000-1000-8000-00805f9b34fb": "software_version",
             }
 
-            _LOGGER.info("Reading standard Device Information Service characteristics")
+            _LOGGER.info("Reading standard device characteristics (Device Info + Generic Access)")
 
             for char_uuid, data_key in device_info_chars.items():
                 try:
