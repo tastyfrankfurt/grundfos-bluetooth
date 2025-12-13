@@ -107,11 +107,7 @@ class GrundfosDevice:
                     await client.start_notify(
                         self._notify_char, self._notification_handler
                     )
-                    _LOGGER.info("✅ Started notifications on %s - handler should be called for any incoming notifications", self._notify_char.uuid)
-
-                    # Verify notifications are actually enabled
-                    _LOGGER.debug("Notification handler registered: %s", self._notification_handler.__name__)
-                    _LOGGER.info("✅ Notifications enabled - ready to receive device responses")
+                    _LOGGER.info("✅ Started notifications on %s", self._notify_char.uuid)
                 except BleakError as ex:
                     _LOGGER.error(
                         "Failed to start notifications on %s: %s",
@@ -505,6 +501,7 @@ class GrundfosDevice:
                 "00002a26-0000-1000-8000-00805f9b34fb": "firmware",
                 "00002a27-0000-1000-8000-00805f9b34fb": "hardware_version",
                 "00002a28-0000-1000-8000-00805f9b34fb": "software_version",
+                "00002a00-0000-1000-8000-00805f9b34fb": "device_name",  # Standard Device Name characteristic
             }
 
             _LOGGER.info("Reading standard Device Information Service characteristics")
