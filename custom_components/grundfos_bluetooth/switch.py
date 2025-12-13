@@ -52,6 +52,16 @@ class GrundfosPumpSwitch(CoordinatorEntity[GrundfosDataUpdateCoordinator], Switc
         )
 
     @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # Entity is available if coordinator has successfully updated and device is connected
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.device is not None
+            and self.coordinator.device.is_connected
+        )
+
+    @property
     def is_on(self) -> bool:
         """Return true if switch is on."""
         return self._is_on

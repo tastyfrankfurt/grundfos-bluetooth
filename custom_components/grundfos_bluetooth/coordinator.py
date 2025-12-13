@@ -39,6 +39,11 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the device."""
+        # Check if the config entry is disabled
+        if self.entry.disabled_by is not None:
+            _LOGGER.debug("Config entry is disabled, skipping update")
+            raise UpdateFailed("Integration is disabled")
+
         # Try up to 2 times in case device disconnected
         for attempt in range(2):
             try:
@@ -103,5 +108,18 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
+        _LOGGER.debug("Shutting down coordinator for %s", self.device_address)
+
+        # Disconnect from device if connected
         if self.device:
-            await self.device.disconnect()
+            try:
+                await self.device.disconnect()
+            except Exception as ex:
+                _LOGGER.warning("Error disconnecting device during shutdown: %s", ex)
+            finally:
+                self.device = None
+
+        # Clear BLE device reference
+        self._ble_device = None
+
+        _LOGGER.debug("Coordinator shutdown complete")

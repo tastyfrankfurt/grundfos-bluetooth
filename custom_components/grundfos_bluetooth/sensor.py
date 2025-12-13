@@ -65,6 +65,16 @@ class GrundfosBaseSensor(CoordinatorEntity[GrundfosDataUpdateCoordinator], Senso
             sw_version=coordinator.data.get("firmware") if coordinator.data else None,
         )
 
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # Entity is available if coordinator has successfully updated and device is connected
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.device is not None
+            and self.coordinator.device.is_connected
+        )
+
 
 class GrundfosStatusSensor(GrundfosBaseSensor):
     """Sensor for pump status."""

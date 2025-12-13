@@ -33,6 +33,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Register reload listener
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
     return True
 
 
@@ -45,7 +48,24 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle removal of an entry."""
+    _LOGGER.debug("Removing Grundfos Bluetooth integration entry")
+
+    # Clean up any remaining data for this entry
+    if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
+        coordinator: GrundfosDataUpdateCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        await coordinator.async_shutdown()
+
+
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload config entry."""
-    await async_unload_entry(hass, entry)
+    _LOGGER.debug("Reloading Grundfos Bluetooth integration entry")
+
+    # Unload the entry first
+    if not await async_unload_entry(hass, entry):
+        _LOGGER.error("Failed to unload entry during reload")
+        return
+
+    # Setup the entry again
     await async_setup_entry(hass, entry)
