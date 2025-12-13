@@ -250,7 +250,7 @@ class GrundfosDevice:
     def _parse_response(self, data: bytes) -> None:
         """Parse device response data."""
         # Based on btsnoop analysis, responses contain various device info
-        # Format: 24 [len] f8 e7 [cmd] [payload] [checksum]
+        # Format: 24 [len] f8 e7 [cmd_id] [cmd_subid] [payload] [checksum]
 
         _LOGGER.debug("Parsing response of %d bytes: %s", len(data), data.hex())
 
@@ -261,34 +261,55 @@ class GrundfosDevice:
         try:
             header = data[0]
             length = data[1]
-            # cmd_high = data[4]
-            # cmd_low = data[5]
+            cmd_id = data[4] if len(data) > 4 else None
+            cmd_subid = data[5] if len(data) > 5 else None
             payload = data[6:-2] if len(data) > 8 else data[6:]  # Exclude checksum at end
 
             _LOGGER.debug(
-                "Response structure: header=0x%02x, length=%d, payload=%d bytes: %s",
+                "Response structure: header=0x%02x, length=%d, cmd=0x%02x/0x%02x, payload=%d bytes: %s",
                 header,
                 length,
+                cmd_id or 0,
+                cmd_subid or 0,
                 len(payload),
                 payload.hex() if payload else "(empty)"
             )
 
             # Try to decode ASCII strings (device info, model, serial, etc.)
             try:
-                decoded = payload.decode("ascii", errors="ignore")
+                decoded = payload.decode("ascii", errors="ignore").rstrip('\x00')
                 if decoded and any(c.isprintable() for c in decoded):
                     _LOGGER.info("✅ Decoded ASCII response: '%s'", decoded)
 
-                    # Store device info
-                    if "SCALA" in decoded:
-                        self._data["model"] = decoded.strip()
+                    # Parse based on command ID (from btsnoop analysis)
+                    if cmd_id == 0x07:  # Device info commands
+                        if cmd_subid == 0x01:  # Model name (can be multi-part)
+                            if "SCALA" in decoded or "model" in self._data:
+                                # Append to existing model or create new
+                                existing = self._data.get("model", "")
+                                self._data["model"] = (existing + decoded).strip()
+                                _LOGGER.info("Found model: %s", self._data["model"])
+                        elif cmd_subid == 0x08:  # Serial part 1
+                            self._data["_serial_part1"] = decoded.strip()
+                            _LOGGER.info("Found serial part 1: %s", decoded.strip())
+                            self._update_serial()
+                        elif cmd_subid == 0x09:  # Serial part 2
+                            self._data["_serial_part2"] = decoded.strip()
+                            _LOGGER.info("Found serial part 2: %s", decoded.strip())
+                            self._update_serial()
+                        elif cmd_subid == 0x11:  # Device name
+                            self._data["device_name"] = decoded.strip()
+                            _LOGGER.info("Found device name: %s", self._data["device_name"])
+                        elif decoded.startswith("V") and "." in decoded:
+                            # Firmware version
+                            existing = self._data.get("firmware_custom", "")
+                            self._data["firmware_custom"] = (existing + decoded).strip()
+                            _LOGGER.info("Found firmware (custom): %s", self._data["firmware_custom"])
+                    elif "SCALA" in decoded:
+                        # Fallback for model detection
+                        existing = self._data.get("model", "")
+                        self._data["model"] = (existing + decoded).strip()
                         _LOGGER.info("Found model: %s", self._data["model"])
-                    elif decoded.startswith("V") and "." in decoded:
-                        self._data["firmware"] = decoded.strip()
-                        _LOGGER.info("Found firmware: %s", self._data["firmware"])
-                    elif decoded.isdigit() and len(decoded) >= 8:
-                        self._data["serial"] = decoded.strip()
-                        _LOGGER.info("Found serial: %s", self._data["serial"])
                 else:
                     _LOGGER.debug("Payload is not printable ASCII")
 
@@ -304,6 +325,15 @@ class GrundfosDevice:
 
         except Exception as ex:
             _LOGGER.error("Error parsing response: %s", ex, exc_info=True)
+
+    def _update_serial(self) -> None:
+        """Combine serial number parts if both are available."""
+        part1 = self._data.get("_serial_part1")
+        part2 = self._data.get("_serial_part2")
+
+        if part1 and part2:
+            self._data["serial_number"] = part1 + part2
+            _LOGGER.info("✅ Combined serial number: %s", self._data["serial_number"])
 
     async def send_command(self, command: bytes, wait_for_response: bool = False, timeout: float = 2.0) -> bytes | None:
         """Send a command to the device.
@@ -371,6 +401,39 @@ class GrundfosDevice:
                 self.client = None
                 raise RuntimeError(f"BLE write failed: {ex}") from ex
 
+    async def send_device_info_commands(self) -> None:
+        """Send commands to retrieve device name and serial number via notifications.
+
+        Based on btsnoop packet capture analysis:
+        - Cmd 0x11: Device name (e.g., "grendal")
+        - Cmd 0x08: Serial number part 1
+        - Cmd 0x09: Serial number part 2
+        """
+        # Commands from btsnoop analysis (exact hex sequences)
+        commands = {
+            "device_name": bytes.fromhex("2705e7f80701114009"),      # Cmd 0x11
+            "serial_part1": bytes.fromhex("2705e7f8070108c311"),     # Cmd 0x08
+            "serial_part2": bytes.fromhex("2705e7f8070109d330"),     # Cmd 0x09
+        }
+
+        _LOGGER.info("📤 Sending device info commands to retrieve name and serial number")
+
+        for cmd_name, cmd_bytes in commands.items():
+            try:
+                _LOGGER.debug("Sending %s command: %s", cmd_name, cmd_bytes.hex())
+                await self.send_command(cmd_bytes, wait_for_response=False)
+
+                # Small delay between commands to let device process
+                await asyncio.sleep(0.1)
+
+            except Exception as ex:
+                _LOGGER.warning("Failed to send %s command: %s", cmd_name, ex)
+                # Continue with other commands even if one fails
+
+        # Wait a bit for all notifications to arrive
+        _LOGGER.debug("Waiting for device info notifications...")
+        await asyncio.sleep(0.5)
+
     async def read_device_info(self) -> dict[str, Any]:
         """Read device information (model, serial, firmware)."""
         _LOGGER.info("📖 Reading device info from %s", self.ble_device.address)
@@ -421,6 +484,15 @@ class GrundfosDevice:
                     _LOGGER.warning("Error reading %s: %s", data_key, ex)
                     # Continue with other characteristics even if one fails
                     continue
+
+            # Send custom commands to retrieve device name and serial number
+            # These are not available via standard GATT characteristics
+            _LOGGER.info("Sending custom commands for device name and serial number")
+            try:
+                await self.send_device_info_commands()
+            except Exception as ex:
+                _LOGGER.warning("Failed to send device info commands: %s", ex)
+                # Don't fail completely, just continue with what we have
 
             _LOGGER.info("Device info read complete. Data: %s", self._data)
             return self._data
