@@ -161,7 +161,12 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self.device.read_device_info()
                 self._device_info_read = True
             else:
-                _LOGGER.debug("Skipping device info read (already read previously)")
+                _LOGGER.debug("Skipping GATT device info read (already read previously)")
+
+            # Always send custom commands to retrieve device name and serial number
+            # These use proprietary protocol and should be attempted on every connection
+            _LOGGER.debug("Sending custom commands for device name and serial number")
+            await self.device.read_custom_device_info()
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""

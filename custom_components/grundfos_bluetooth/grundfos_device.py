@@ -499,21 +499,27 @@ class GrundfosDevice:
                     # Continue with other characteristics even if one fails
                     continue
 
-            # Send custom commands to retrieve device name and serial number
-            # These are not available via standard GATT characteristics
-            _LOGGER.info("Sending custom commands for device name and serial number")
-            try:
-                await self.send_device_info_commands()
-            except Exception as ex:
-                _LOGGER.warning("Failed to send device info commands: %s", ex)
-                # Don't fail completely, just continue with what we have
-
-            _LOGGER.info("Device info read complete. Data: %s", self._data)
+            _LOGGER.info("Device info read complete (GATT characteristics). Data: %s", self._data)
             return self._data
 
         except Exception as ex:
             _LOGGER.error("Failed to read device info: %s", ex, exc_info=True)
             raise RuntimeError(f"Failed to read device info: {ex}") from ex
+
+    async def read_custom_device_info(self) -> None:
+        """Send custom commands to retrieve device name and serial number.
+
+        This should be called separately from read_device_info() and can be
+        called on every connection to ensure we have this data.
+        """
+        # Send custom commands to retrieve device name and serial number
+        # These are not available via standard GATT characteristics
+        _LOGGER.info("Reading custom device info (name and serial number)")
+        try:
+            await self.send_device_info_commands()
+        except Exception as ex:
+            _LOGGER.warning("Failed to send device info commands: %s", ex)
+            # Don't fail completely, just continue with what we have
 
     async def read_pump_status(self) -> dict[str, Any]:
         """Read pump status and sensor data."""
