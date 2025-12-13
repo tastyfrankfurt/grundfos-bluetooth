@@ -405,18 +405,32 @@ class GrundfosDevice:
         """Send commands to retrieve device name and serial number via notifications.
 
         Based on btsnoop packet capture analysis:
+        - Init command: Required handshake before device responds
         - Cmd 0x11: Device name (e.g., "grendal")
         - Cmd 0x08: Serial number part 1
         - Cmd 0x09: Serial number part 2
         """
-        # Commands from btsnoop analysis (exact hex sequences)
+        _LOGGER.info("📤 Sending device info commands to retrieve name and serial number")
+
+        # Step 1: Send initialization/handshake command (from btsnoop frame 593)
+        # This MUST be sent first or device will ignore subsequent commands
+        try:
+            init_cmd = bytes.fromhex("2707fff802039495964f91")
+            _LOGGER.debug("Sending initialization command: %s", init_cmd.hex())
+            await self.send_command(init_cmd, wait_for_response=False)
+
+            # Wait for init response before sending queries
+            await asyncio.sleep(0.2)
+        except Exception as ex:
+            _LOGGER.warning("Failed to send init command: %s", ex)
+            return  # Can't proceed without successful init
+
+        # Step 2: Send device info query commands
         commands = {
             "device_name": bytes.fromhex("2705e7f80701114009"),      # Cmd 0x11
             "serial_part1": bytes.fromhex("2705e7f8070108c311"),     # Cmd 0x08
             "serial_part2": bytes.fromhex("2705e7f8070109d330"),     # Cmd 0x09
         }
-
-        _LOGGER.info("📤 Sending device info commands to retrieve name and serial number")
 
         for cmd_name, cmd_bytes in commands.items():
             try:
@@ -424,13 +438,13 @@ class GrundfosDevice:
                 await self.send_command(cmd_bytes, wait_for_response=False)
 
                 # Small delay between commands to let device process
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.15)
 
             except Exception as ex:
                 _LOGGER.warning("Failed to send %s command: %s", cmd_name, ex)
                 # Continue with other commands even if one fails
 
-        # Wait a bit for all notifications to arrive
+        # Wait for all notifications to arrive
         _LOGGER.debug("Waiting for device info notifications...")
         await asyncio.sleep(0.5)
 
