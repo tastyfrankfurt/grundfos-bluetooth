@@ -74,6 +74,18 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     return {}
 
                 _LOGGER.debug("Successfully updated data: %s", data)
+
+                # Gracefully disconnect after reading data
+                # This prevents the device from timing out and disconnecting on its own
+                # The next update cycle will reconnect as needed
+                if self.device and self.device.is_connected:
+                    _LOGGER.debug("Gracefully disconnecting after successful data read")
+                    try:
+                        await self.device.disconnect()
+                    except Exception as disconnect_ex:
+                        _LOGGER.debug("Error during graceful disconnect: %s", disconnect_ex)
+                        # Not critical, continue anyway
+
                 return data
 
             except (RuntimeError, UpdateFailed) as err:

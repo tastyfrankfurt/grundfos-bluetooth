@@ -70,9 +70,15 @@ class GrundfosDevice:
             # Start listening for notifications
             if self._notify_char:
                 try:
+                    # Store local reference to client to avoid race condition
+                    client = self.client
+                    if not client or not client.is_connected:
+                        _LOGGER.error("Client disconnected before starting notifications")
+                        return False
+
                     # Verify the characteristic is still valid in current services
                     char_found = False
-                    for service in self.client.services:
+                    for service in client.services:
                         for char in service.characteristics:
                             if char.uuid == self._notify_char.uuid:
                                 char_found = True
@@ -90,13 +96,13 @@ class GrundfosDevice:
                             "Characteristic %s not found in current services! "
                             "Available characteristics: %s",
                             self._notify_char.uuid,
-                            [char.uuid for s in self.client.services for char in s.characteristics]
+                            [char.uuid for s in client.services for char in s.characteristics]
                         )
                         raise BleakError(f"Characteristic {self._notify_char.uuid} not found in services")
 
                     _LOGGER.debug("Starting notifications on %s", self._notify_char.uuid)
                     # Use the characteristic object directly
-                    await self.client.start_notify(
+                    await client.start_notify(
                         self._notify_char, self._notification_handler
                     )
                     _LOGGER.info("Started notifications on %s", self._notify_char.uuid)
@@ -127,6 +133,12 @@ class GrundfosDevice:
             _LOGGER.error("Cannot discover characteristics - client not connected")
             return
 
+        # Store local reference to avoid race condition with disconnect callback
+        client = self.client
+        if not client:
+            _LOGGER.error("Client became None during characteristic discovery")
+            return
+
         _LOGGER.info("Discovering characteristics for device %s", self.ble_device.address)
 
         notify_candidates = []
@@ -134,7 +146,7 @@ class GrundfosDevice:
         combined_candidates = []
 
         # Scan all services and characteristics
-        for service in self.client.services:
+        for service in client.services:
             _LOGGER.info("Service: %s (UUID: %s)", service.description, service.uuid)
 
             for char in service.characteristics:
@@ -346,12 +358,15 @@ class GrundfosDevice:
         Returns:
             The response bytes if wait_for_response=True, otherwise None
         """
+        # Store local reference to avoid race condition with disconnect callback
+        client = self.client
+
         # Check client connection
-        if not self.client:
+        if not client:
             _LOGGER.error("Cannot send command: BLE client not initialized")
             raise RuntimeError("BLE client not initialized")
 
-        if not self.client.is_connected:
+        if not client.is_connected:
             _LOGGER.error("Cannot send command: Device not connected to BLE")
             raise RuntimeError("Device not connected to BLE")
 
@@ -374,7 +389,7 @@ class GrundfosDevice:
 
                 _LOGGER.debug("📤 Sending command to %s: %s", self._write_char.uuid, command.hex())
                 # Use the characteristic object directly
-                await self.client.write_gatt_char(
+                await client.write_gatt_char(
                     self._write_char, command, response=False
                 )
                 _LOGGER.debug("✅ Command sent successfully")
@@ -465,18 +480,24 @@ class GrundfosDevice:
 
             _LOGGER.info("Reading standard Device Information Service characteristics")
 
+            # Store local reference to avoid race condition with disconnect callback
+            client = self.client
+            if not client or not client.is_connected:
+                _LOGGER.warning("Client disconnected before reading device info")
+                return self._data
+
             for char_uuid, data_key in device_info_chars.items():
                 try:
                     # Find the characteristic in services
                     char_found = False
-                    for service in self.client.services:
+                    for service in client.services:
                         for char in service.characteristics:
                             if char.uuid == char_uuid:
                                 char_found = True
                                 _LOGGER.debug("Reading %s characteristic: %s", data_key, char_uuid)
 
                                 # Read the characteristic value
-                                value = await self.client.read_gatt_char(char)
+                                value = await client.read_gatt_char(char)
 
                                 # Decode as UTF-8 string (standard for device info characteristics)
                                 decoded_value = value.decode("utf-8", errors="ignore").strip()
@@ -550,20 +571,26 @@ class GrundfosDevice:
 
     async def disconnect(self) -> None:
         """Disconnect from the device."""
-        if self.client and self.client.is_connected:
+        # Store local reference to avoid race condition
+        client = self.client
+
+        if client and client.is_connected:
             try:
                 # Stop notifications if they were started
                 if self._notify_char:
                     try:
-                        await self.client.stop_notify(self._notify_char)
+                        await client.stop_notify(self._notify_char)
                         _LOGGER.debug("Stopped notifications on %s", self._notify_char.uuid)
                     except Exception as ex:
                         _LOGGER.warning("Error stopping notifications: %s", ex)
 
-                await self.client.disconnect()
-                _LOGGER.info("Disconnected from device %s", self.ble_device.address)
+                await client.disconnect()
+                _LOGGER.info("✅ Gracefully disconnected from device %s", self.ble_device.address)
             except BleakError as ex:
                 _LOGGER.error("Error disconnecting from device: %s", ex)
+            finally:
+                # Always clear client reference after disconnect attempt
+                self.client = None
 
     @property
     def is_connected(self) -> bool:
