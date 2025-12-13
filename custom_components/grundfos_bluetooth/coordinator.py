@@ -6,9 +6,9 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
 
+from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant
@@ -107,29 +107,32 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _ensure_connection(self) -> None:
         """Ensure the device is connected."""
-        # If device is not connected, always rescan to get fresh BLEDevice object
+        # If device is not connected, get fresh BLEDevice object from Home Assistant
         if not self.device or not self.device.is_connected:
             _LOGGER.info("Device not connected, scanning for %s", self.device_address)
 
-            # Try scanning with retries
-            max_scan_attempts = 3
-            for scan_attempt in range(max_scan_attempts):
-                self._ble_device = await BleakScanner.find_device_by_address(
-                    self.device_address, timeout=15.0
+            # Use Home Assistant's bluetooth integration to get the device
+            # This properly integrates with HA's bluetooth manager and proxies
+            self._ble_device = bluetooth.async_ble_device_from_address(
+                self.hass, self.device_address, connectable=True
+            )
+
+            if not self._ble_device:
+                _LOGGER.warning(
+                    "Device %s not found in Home Assistant bluetooth cache, "
+                    "waiting for discovery...",
+                    self.device_address
                 )
-
-                if self._ble_device:
-                    _LOGGER.debug("Found device on scan attempt %d", scan_attempt + 1)
-                    break
-
-                if scan_attempt < max_scan_attempts - 1:
-                    _LOGGER.debug("Device not found, retrying scan (attempt %d/%d)",
-                                 scan_attempt + 1, max_scan_attempts)
-                    await asyncio.sleep(2)
+                # Wait a bit and try again - device might be discovered soon
+                await asyncio.sleep(2)
+                self._ble_device = bluetooth.async_ble_device_from_address(
+                    self.hass, self.device_address, connectable=True
+                )
 
             if not self._ble_device:
                 raise UpdateFailed(
-                    f"Device {self.device_address} not found after {max_scan_attempts} scan attempts"
+                    f"Device {self.device_address} not found. Ensure it is in range and "
+                    f"bluetooth is working properly."
                 )
 
         if not self.device:
@@ -144,9 +147,9 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not connected:
                 raise UpdateFailed("Failed to connect to device")
 
-            # Give connection time to stabilize
+            # Give connection time to stabilize (reduced from 1.5s to 0.5s)
             _LOGGER.debug("Waiting for connection to stabilize")
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.5)
 
             # Verify connection is still active after stabilization delay
             if not self.device.is_connected:

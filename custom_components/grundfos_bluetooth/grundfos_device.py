@@ -8,7 +8,11 @@ from typing import Any, Callable
 
 from bleak import BleakClient, BleakError
 from bleak.backends.device import BLEDevice
-from bleak_retry_connector import establish_connection
+from bleak_retry_connector import (
+    BLEAK_RETRY_EXCEPTIONS as BLEAK_EXCEPTIONS,
+    BleakClientWithServiceCache,
+    establish_connection,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,10 +42,13 @@ class GrundfosDevice:
             _LOGGER.info("Attempting to connect to %s (name: %s)",
                         self.ble_device.address, self.ble_device.name)
             self.client = await establish_connection(
-                BleakClient,
+                BleakClientWithServiceCache,
                 self.ble_device,
                 self.ble_device.address,
                 disconnected_callback=self._disconnected_callback,
+                max_attempts=3,  # Reduce from default 10 to avoid slot exhaustion
+                use_services_cache=True,
+                ble_device_callback=lambda: self.ble_device,
             )
 
             _LOGGER.info("Successfully established connection to %s", self.ble_device.address)

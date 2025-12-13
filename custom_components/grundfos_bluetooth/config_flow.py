@@ -5,9 +5,9 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from bleak import BleakScanner
 
 from homeassistant import config_entries
+from homeassistant.components import bluetooth
 from homeassistant.const import CONF_ADDRESS, CONF_NAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
@@ -128,14 +128,15 @@ class GrundfosConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_scan_for_devices(self) -> dict[str, Any]:
         """Scan for Grundfos BLE devices."""
-        _LOGGER.debug("Scanning for Grundfos Bluetooth devices")
+        _LOGGER.debug("Scanning for Grundfos Bluetooth devices using Home Assistant bluetooth")
 
         try:
-            # Scan for 10 seconds
-            devices = await BleakScanner.discover(timeout=10.0)
-
+            # Get discovered devices from Home Assistant's bluetooth integration
             discovered = {}
-            for device in devices:
+
+            # Get all bluetooth devices discovered by Home Assistant
+            for service_info in bluetooth.async_discovered_service_info(self.hass, connectable=True):
+                device = service_info.device
                 # Look for Grundfos devices
                 # Based on btsnoop, we can identify by service UUIDs or name
                 if device.name and any(
@@ -144,7 +145,7 @@ class GrundfosConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ):
                     discovered[device.address] = {
                         "name": device.name,
-                        "rssi": getattr(device, "rssi", None),
+                        "rssi": service_info.rssi,
                     }
                     _LOGGER.debug("Found Grundfos device: %s (%s)", device.name, device.address)
 
