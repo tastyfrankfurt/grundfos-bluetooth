@@ -1,6 +1,7 @@
 """DataUpdateCoordinator for Grundfos Bluetooth."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
@@ -38,26 +39,43 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the device."""
-        try:
-            # Ensure device is connected
-            if not self.device or not self.device.is_connected:
-                await self._ensure_connection()
+        # Try up to 2 times in case device disconnected
+        for attempt in range(2):
+            try:
+                # Ensure device is connected
+                if not self.device or not self.device.is_connected:
+                    await self._ensure_connection()
 
-            if not self.device or not self.device.is_connected:
-                raise UpdateFailed("Device not connected")
+                if not self.device or not self.device.is_connected:
+                    raise UpdateFailed("Device not connected")
 
-            # Read pump status
-            await self.device.read_pump_status()
+                # Read pump status
+                await self.device.read_pump_status()
 
-            # Get current data
-            data = self.device.get_data()
+                # Get current data
+                data = self.device.get_data()
 
-            _LOGGER.debug("Updated data: %s", data)
-            return data
+                _LOGGER.debug("Updated data: %s", data)
+                return data
 
-        except Exception as err:
-            _LOGGER.error("Error updating data: %s", err)
-            raise UpdateFailed(f"Error communicating with device: {err}") from err
+            except (RuntimeError, UpdateFailed) as err:
+                _LOGGER.warning("Error on attempt %d: %s", attempt + 1, err)
+
+                # Reset connection state for retry
+                if self.device:
+                    self.device.client = None
+                self._ble_device = None
+
+                # If this was the last attempt, raise the error
+                if attempt == 1:
+                    _LOGGER.error("Error updating data after retries: %s", err)
+                    raise UpdateFailed(f"Error communicating with device: {err}") from err
+
+                # Wait a bit before retrying
+                await asyncio.sleep(1)
+
+        # Should never reach here, but just in case
+        raise UpdateFailed("Failed to update data")
 
     async def _ensure_connection(self) -> None:
         """Ensure the device is connected."""

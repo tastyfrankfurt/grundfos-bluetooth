@@ -158,46 +158,56 @@ class GrundfosDevice:
                 )
             except BleakError as ex:
                 _LOGGER.error("Failed to send command: %s", ex)
-                raise
+                # Mark as disconnected
+                self.client = None
+                raise RuntimeError(f"Failed to send command: {ex}") from ex
 
     async def read_device_info(self) -> dict[str, Any]:
         """Read device information (model, serial, firmware)."""
-        # Based on btsnoop, device info commands start with 2705e7f807...
-        # Command pattern: 27 05 e7 f8 07 01 [param] [checksum]
+        try:
+            # Based on btsnoop, device info commands start with 2705e7f807...
+            # Command pattern: 27 05 e7 f8 07 01 [param] [checksum]
 
-        commands = [
-            bytes.fromhex("2705e7f80701015238"),  # Read command (from btsnoop)
-            bytes.fromhex("2705e7f80701085238"),  # Serial number
-            bytes.fromhex("2705e7f80701095238"),  # Another ID
-            bytes.fromhex("2705e7f80701325408"),  # Firmware 1
-            bytes.fromhex("2705e7f807013ad500"),  # Firmware 2
-        ]
+            commands = [
+                bytes.fromhex("2705e7f80701015238"),  # Read command (from btsnoop)
+                bytes.fromhex("2705e7f80701085238"),  # Serial number
+                bytes.fromhex("2705e7f80701095238"),  # Another ID
+                bytes.fromhex("2705e7f80701325408"),  # Firmware 1
+                bytes.fromhex("2705e7f807013ad500"),  # Firmware 2
+            ]
 
-        for cmd in commands:
-            await self.send_command(cmd)
-            await asyncio.sleep(0.2)  # Wait for response
+            for cmd in commands:
+                await self.send_command(cmd)
+                await asyncio.sleep(0.2)  # Wait for response
 
-        # Give time for notifications to arrive
-        await asyncio.sleep(1)
+            # Give time for notifications to arrive
+            await asyncio.sleep(1)
 
-        return self._data
+            return self._data
+        except Exception as ex:
+            _LOGGER.error("Failed to read device info: %s", ex)
+            raise RuntimeError(f"Failed to read device info: {ex}") from ex
 
     async def read_pump_status(self) -> dict[str, Any]:
         """Read pump status and sensor data."""
-        # Based on btsnoop analysis, status commands use pattern:
-        # 2707e7f80a03[param][checksum]
+        try:
+            # Based on btsnoop analysis, status commands use pattern:
+            # 2707e7f80a03[param][checksum]
 
-        status_commands = [
-            bytes.fromhex("2707e7f80a035e00044cb9"),  # Status command from btsnoop
-            bytes.fromhex("2707e7f80a035b00a412a3"),  # Another status
-        ]
+            status_commands = [
+                bytes.fromhex("2707e7f80a035e00044cb9"),  # Status command from btsnoop
+                bytes.fromhex("2707e7f80a035b00a412a3"),  # Another status
+            ]
 
-        for cmd in status_commands:
-            await self.send_command(cmd)
-            await asyncio.sleep(0.2)
+            for cmd in status_commands:
+                await self.send_command(cmd)
+                await asyncio.sleep(0.2)
 
-        await asyncio.sleep(1)
-        return self._data
+            await asyncio.sleep(1)
+            return self._data
+        except Exception as ex:
+            _LOGGER.error("Failed to read pump status: %s", ex)
+            raise RuntimeError(f"Failed to read pump status: {ex}") from ex
 
     def register_notification_callback(self, callback: Callable[[bytes], None]) -> None:
         """Register a callback for notifications."""
