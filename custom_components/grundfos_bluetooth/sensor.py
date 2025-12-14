@@ -93,8 +93,10 @@ class GrundfosStatusSensor(GrundfosBaseSensor):
         """Return the state of the sensor."""
         if not self.coordinator.data:
             return None
-        # Parse status from data
-        return "Connected" if self.coordinator.device and self.coordinator.device.is_connected else "Disconnected"
+        # Show Connected if last update was successful
+        # Note: coordinator disconnects after each update to prevent timeout issues
+        # so we check last_update_success instead of is_connected
+        return "Connected" if self.coordinator.last_update_success else "Disconnected"
 
 
 class GrundfosModelSensor(GrundfosBaseSensor):

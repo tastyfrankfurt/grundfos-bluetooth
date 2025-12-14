@@ -450,6 +450,11 @@ class GrundfosDevice:
                     # Continue with other characteristics even if one fails
                     continue
 
+            # Use hardware_version as serial_number if available (until we find actual serial characteristic)
+            if "hardware_version" in self._data and "serial_number" not in self._data:
+                self._data["serial_number"] = self._data["hardware_version"]
+                _LOGGER.info("Using hardware_version as serial_number: '%s'", self._data["serial_number"])
+
             _LOGGER.info("Device info read complete (GATT characteristics). Data: %s", self._data)
             return self._data
 
