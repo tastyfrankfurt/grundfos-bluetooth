@@ -175,11 +175,8 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     _LOGGER.info("Reading device info for the first time")
 
-                # Read standard GATT characteristics (manufacturer, model, firmware)
+                # Read standard GATT characteristics (manufacturer, model, firmware, device_name)
                 await self.device.read_device_info()
-
-                # Read custom device info (device_name and serial_number via custom commands)
-                await self.device.read_custom_device_info()
 
                 self._device_info_read = True
             else:

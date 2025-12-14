@@ -303,34 +303,8 @@ class GrundfosDevice:
                     _LOGGER.info("✅ Decoded ASCII response: '%s'", decoded)
 
                     # Parse based on command ID (from btsnoop analysis)
-                    if cmd_id == 0x07:  # Device info commands
-                        if cmd_subid == 0x01:  # Model name (can be multi-part)
-                            if "SCALA" in decoded or "model" in self._data:
-                                # Append to existing model or create new
-                                existing = self._data.get("model", "")
-                                self._data["model"] = (existing + decoded).strip()
-                                _LOGGER.info("Found model: %s", self._data["model"])
-                        elif cmd_subid == 0x08:  # Serial part 1
-                            self._data["_serial_part1"] = decoded.strip()
-                            _LOGGER.info("Found serial part 1: %s", decoded.strip())
-                            self._update_serial()
-                        elif cmd_subid == 0x09:  # Serial part 2
-                            self._data["_serial_part2"] = decoded.strip()
-                            _LOGGER.info("Found serial part 2: %s", decoded.strip())
-                            self._update_serial()
-                        elif cmd_subid == 0x11:  # Device name
-                            self._data["device_name"] = decoded.strip()
-                            _LOGGER.info("Found device name: %s", self._data["device_name"])
-                        elif decoded.startswith("V") and "." in decoded:
-                            # Firmware version
-                            existing = self._data.get("firmware_custom", "")
-                            self._data["firmware_custom"] = (existing + decoded).strip()
-                            _LOGGER.info("Found firmware (custom): %s", self._data["firmware_custom"])
-                    elif "SCALA" in decoded:
-                        # Fallback for model detection
-                        existing = self._data.get("model", "")
-                        self._data["model"] = (existing + decoded).strip()
-                        _LOGGER.info("Found model: %s", self._data["model"])
+                    # Custom device info commands have been removed
+                    # All device info is now read from standard GATT characteristics
                 else:
                     _LOGGER.debug("Payload is not printable ASCII")
 
@@ -347,14 +321,6 @@ class GrundfosDevice:
         except Exception as ex:
             _LOGGER.error("Error parsing response: %s", ex, exc_info=True)
 
-    def _update_serial(self) -> None:
-        """Combine serial number parts if both are available."""
-        part1 = self._data.get("_serial_part1")
-        part2 = self._data.get("_serial_part2")
-
-        if part1 and part2:
-            self._data["serial_number"] = part1 + part2
-            _LOGGER.info("✅ Combined serial number: %s", self._data["serial_number"])
 
     async def send_command(self, command: bytes, wait_for_response: bool = False, timeout: float = 2.0) -> bytes | None:
         """Send a command to the device.
@@ -425,70 +391,6 @@ class GrundfosDevice:
                 self.client = None
                 raise RuntimeError(f"BLE write failed: {ex}") from ex
 
-    async def send_device_info_commands(self) -> None:
-        """Send commands to retrieve device name and serial number via notifications.
-
-        Based on btsnoop packet capture analysis:
-        - Init command: Required handshake before device responds
-        - Cmd 0x11: Device name (e.g., "grendal")
-        - Cmd 0x08: Serial number part 1
-        - Cmd 0x09: Serial number part 2
-        """
-        _LOGGER.info("📤 Sending device info commands to retrieve name and serial number")
-
-        # EXPERIMENTAL: Send INIT but don't wait - just fire and forget
-        # The test read showed the INIT pattern in the response
-        try:
-            init_cmd = bytes.fromhex("2707fff802039495964f91")
-            _LOGGER.info("Sending INIT command (fire-and-forget): %s", init_cmd.hex())
-            await self.send_command(init_cmd, wait_for_response=False)
-            # Very short delay to let it process
-            await asyncio.sleep(0.1)
-            _LOGGER.info("✅ INIT command sent, proceeding to device info commands")
-        except Exception as ex:
-            _LOGGER.warning("Failed to send INIT: %s - continuing anyway", ex)
-
-        # Step 2: Send device info query commands ONE AT A TIME with response wait
-        # This matches the btsnoop pattern: Send → Wait for response → Send next
-        commands = [
-            ("device_name", bytes.fromhex("2705e7f80701114009")),      # Cmd 0x11
-            ("serial_part1", bytes.fromhex("2705e7f8070108c311")),     # Cmd 0x08
-            ("serial_part2", bytes.fromhex("2705e7f8070109d330")),     # Cmd 0x09
-        ]
-
-        for cmd_name, cmd_bytes in commands:
-            try:
-                _LOGGER.info("📤 Sending %s command and waiting for response: %s", cmd_name, cmd_bytes.hex())
-
-                # Send and WAIT for response (like btsnoop shows)
-                response = await self.send_command(cmd_bytes, wait_for_response=True, timeout=1.0)
-
-                if response:
-                    _LOGGER.info("✅ Received %s response (%d bytes): %s", cmd_name, len(response), response.hex())
-                else:
-                    _LOGGER.warning("⚠️  No response for %s", cmd_name)
-
-                # Small delay before next command
-                await asyncio.sleep(0.1)
-
-            except Exception as ex:
-                _LOGGER.warning("Failed to send/receive %s command: %s", cmd_name, ex)
-                # Continue with other commands even if one fails
-
-        # Give extra time for any delayed notifications
-        _LOGGER.info("⏳ Waiting 0.5 seconds for any delayed notifications...")
-        await asyncio.sleep(0.5)
-
-        # Log what we received
-        if "device_name" in self._data:
-            _LOGGER.info("✅ Successfully retrieved device_name: %s", self._data["device_name"])
-        else:
-            _LOGGER.warning("⚠️  device_name NOT received")
-
-        if "serial_number" in self._data:
-            _LOGGER.info("✅ Successfully retrieved serial_number: %s", self._data["serial_number"])
-        else:
-            _LOGGER.warning("⚠️  serial_number NOT received")
 
     async def read_device_info(self) -> dict[str, Any]:
         """Read device information (model, serial, firmware)."""
@@ -555,20 +457,6 @@ class GrundfosDevice:
             _LOGGER.error("Failed to read device info: %s", ex, exc_info=True)
             raise RuntimeError(f"Failed to read device info: {ex}") from ex
 
-    async def read_custom_device_info(self) -> None:
-        """Send custom commands to retrieve device name and serial number.
-
-        This should be called separately from read_device_info() and can be
-        called on every connection to ensure we have this data.
-        """
-        # Send custom commands to retrieve device name and serial number
-        # These are not available via standard GATT characteristics
-        _LOGGER.info("Reading custom device info (name and serial number)")
-        try:
-            await self.send_device_info_commands()
-        except Exception as ex:
-            _LOGGER.warning("Failed to send device info commands: %s", ex)
-            # Don't fail completely, just continue with what we have
 
     async def read_pump_status(self) -> dict[str, Any]:
         """Read pump status and sensor data."""
