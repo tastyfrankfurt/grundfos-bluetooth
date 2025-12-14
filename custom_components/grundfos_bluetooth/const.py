@@ -17,7 +17,7 @@ CONF_SCAN_INTERVAL = "scan_interval"
 
 # Default values
 DEFAULT_NAME = "Grundfos Pump"
-DEFAULT_SCAN_INTERVAL = 60  # seconds
+DEFAULT_SCAN_INTERVAL = 30  # seconds
 
 # Device info patterns (from btsnoop)
 # Model: SCALA1 3-45 1x230V 50Hz

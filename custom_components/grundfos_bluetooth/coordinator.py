@@ -75,16 +75,13 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 _LOGGER.debug("Successfully updated data: %s", data)
 
-                # Gracefully disconnect after reading data
-                # This prevents the device from timing out and disconnecting on its own
-                # The next update cycle will reconnect as needed
+                # Disconnect after successful read
                 if self.device and self.device.is_connected:
-                    _LOGGER.debug("Gracefully disconnecting after successful data read")
                     try:
                         await self.device.disconnect()
-                    except Exception as disconnect_ex:
-                        _LOGGER.debug("Error during graceful disconnect: %s", disconnect_ex)
-                        # Not critical, continue anyway
+                        _LOGGER.debug("Disconnected after successful data read")
+                    except Exception as disconnect_err:
+                        _LOGGER.debug("Error during disconnect: %s", disconnect_err)
 
                 return data
 
@@ -94,13 +91,15 @@ class GrundfosDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Reset connection state for retry
                 if self.device:
                     try:
-                        # Try to disconnect cleanly
+                        # Disconnect cleanly
                         if self.device.is_connected:
                             await self.device.disconnect()
                     except Exception as disconnect_err:
-                        _LOGGER.debug("Error during disconnect: %s", disconnect_err)
+                        _LOGGER.debug("Error during disconnect cleanup: %s", disconnect_err)
                     finally:
-                        self.device.client = None
+                        # Clear client reference to force fresh connection on retry
+                        if self.device:
+                            self.device.client = None
 
                 self._ble_device = None
 

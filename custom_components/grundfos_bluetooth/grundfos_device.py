@@ -108,6 +108,7 @@ class GrundfosDevice:
                         self._notify_char, self._notification_handler
                     )
                     _LOGGER.info("✅ Started notifications on %s", self._notify_char.uuid)
+
                 except BleakError as ex:
                     _LOGGER.error(
                         "Failed to start notifications on %s: %s",
@@ -128,6 +129,7 @@ class GrundfosDevice:
         """Handle disconnection."""
         _LOGGER.warning("Device %s disconnected", self.ble_device.address)
         self.client = None
+
 
     async def _discover_characteristics(self) -> None:
         """Discover device characteristics."""
